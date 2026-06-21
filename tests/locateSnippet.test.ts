@@ -39,4 +39,23 @@ describe("locateSnippetLines", () => {
     expect(locateSnippetLines(FULL, "")).toEqual([]);
     expect(locateSnippetLines(FULL, "   \n  ")).toEqual([]);
   });
+
+  it("does NOT highlight a large block when only the first line matches (threshold)", () => {
+    // 首行 import 命中, 但其余几行全不在 FULL 里 → 不应整段高亮成大块。
+    const snippet = `import { foo } from "bar";
+const a = 111;
+const b = 222;
+const c = 333;
+const d = 444;`;
+    expect(locateSnippetLines(FULL, snippet)).toEqual([]);
+  });
+
+  it("still matches when a majority of snippet lines align", () => {
+    // 4 行里 3 行真匹配(中间一行不同), 过半 → 仍返回区间。
+    const snippet = `export function getEnv(ctx) {
+  const value = ctx.cloudflare.env.SECRET;
+  const noise = 0;
+  return value;`;
+    expect(locateSnippetLines(FULL, snippet)).toEqual([3, 4, 5, 6]);
+  });
 });

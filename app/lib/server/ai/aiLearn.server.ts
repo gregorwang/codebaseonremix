@@ -161,13 +161,13 @@ async function runAiFeature(
       prompt: params.prompt,
       maxTokens:
         params.feature === "explanation"
-          ? 2500
+          ? 4096
           : params.feature === "hint"
             ? 800
             : params.feature === "lesson_teaching"
               ? 4096
               : params.feature === "code_orientation"
-                ? 3000
+                ? 4096
                 : params.feature === "lesson_diagram"
                   ? 1500
                   : params.feature === "question_diagram"

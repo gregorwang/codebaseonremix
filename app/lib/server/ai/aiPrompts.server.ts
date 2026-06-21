@@ -532,16 +532,25 @@ const ANNOTATION_OUTPUT_CONTRACT = `## 输出格式 (硬性)
 {
   "summary": "一句话总览, 不超过 60 字",
   "annotations": [
-    { "startLine": 12, "endLine": 14, "note": "讲解, 可用 markdown(**bold**、行内反引号代码)" }
+    { "startLine": 12, "endLine": 14, "placement": "block", "note": "讲解, 可用 markdown(**bold**、行内反引号代码)" }
   ]
 }
 
-规则:
+## placement (每条必填, 三选一)
+
+- "block": 下方整行的详细讲解。**这是主力形态, 要讲透**: 这几行的卡点在哪 / 给下一步交付了什么 / AI 来改这里最容易改坏什么 / 用户下次怎么判断。可以写成几句话甚至一小段, **不要怕长**, 但每句都要有信息。
+- "inline": 行尾内联的一句话短点评 (像随手批注)。只用于一眼能点破的小提醒, 必须精炼到一行。
+- "highlight": 只想把某段关键行"圈出来"提醒注意时用; note 写"为什么这段值得盯"。
+
+一条注释里 block 与 inline 不要混: 长的用 block, 短的用 inline。
+
+## 内容规则
+
 - startLine / endLine 是 1-based, 对应输入里给出的源码整体行号; 每条 annotation 锚定一段连续、真实存在的代码行。
 - 必须引用真实函数名/字段名/路径, 禁止编造不存在的标识符。
-- 注释要讲"这几行在干嘛、给下一步交付了什么、为什么必须放这里", 不要复述代码字面。
+- 讲"这几行在干嘛、给下一步交付了什么、为什么必须放这里", 不要复述代码字面。
 - 禁止泛讲语法 (如 "useEffect 是 React hook"), 禁止 "非常重要 / 核心 / 关键所在 / 至关重要" 这类废话词。
-- 控制在 4-8 条 annotation, 抓关键行, 不要逐行注水。
+- 抓真正相关的行, 不要逐行注水; 但选中的 block 注释要展开讲够, 不要为了条数把每条压成半句话。
 - note 里绝不能出现真实密钥 / token 字面值。`;
 
 const CODE_ORIENTATION_SYSTEM_PROMPT = `你是 Code Coach 的中文教学 AI。Code Coach 训练的是"能读懂 AI 生成代码因果链"的工程师。

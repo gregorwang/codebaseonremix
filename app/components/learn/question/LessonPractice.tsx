@@ -212,14 +212,24 @@ export function LessonPractice({
   }
 
   const lessonComplete = progress.isCompleted;
-  const activeSourcePath =
-    currentQuestionResolved.sourceFilePath ?? lessonSourceFilePath ?? null;
+  const sourceFiles = useMemo(() => {
+    const list = [
+      currentQuestionResolved.sourceFilePath,
+      ...(currentQuestionResolved.touchedFiles ?? []),
+      lessonSourceFilePath,
+    ].filter((p): p is string => Boolean(p));
+    return Array.from(new Set(list));
+  }, [
+    currentQuestionResolved.sourceFilePath,
+    currentQuestionResolved.touchedFiles,
+    lessonSourceFilePath,
+  ]);
 
   return (
     <div className="space-y-4">
       {/* 卡1: 源码 + 行内 AI 讲解(答题前导读 / 答题后结合答案) */}
       <AnnotatedSourceCard
-        sourceFilePath={activeSourcePath}
+        files={sourceFiles}
         questionCode={currentQuestionResolved.code}
         questionId={currentQuestionResolved.id}
         questionType={currentQuestionResolved.type}

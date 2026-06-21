@@ -13,9 +13,9 @@ type AnnoData =
   | { ok: false; error: string; code?: string };
 
 type AnnotatedSourceCardProps = {
-  /** 当前题目关联的源码文件(相对 remix 路径); null 表示无源码。 */
-  sourceFilePath: string | null;
-  /** 题目代码片段, 用于在全文里高亮定位。 */
+  /** 本题相关的源码文件(相对 remix 路径), 第一个为默认激活。空数组表示无源码。 */
+  files: string[];
+  /** 题目代码片段, 用于在全文里高亮定位(匹配不上的文件自动不高亮)。 */
   questionCode?: string;
   questionId: string;
   questionType: QuestionType;
@@ -29,8 +29,13 @@ const sparkle = (
   </svg>
 );
 
+function fileLabel(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
+}
+
 export function AnnotatedSourceCard({
-  sourceFilePath,
+  files,
   questionCode,
   questionId,
   questionType,
@@ -39,58 +44,82 @@ export function AnnotatedSourceCard({
   const sourceFetcher = useFetcher<SourceData>();
   const annoFetcher = useFetcher<AnnoData>();
 
-  const [annotated, setAnnotated] = useState<AnnotatedExplanation | null>(null);
-  // 当前注释的来源阶段, 用于决定是否需要在 answered 翻转后重新拉。
-  const [annoStage, setAnnoStage] = useState<"none" | "orientation" | "explanation">("none");
+  const [activeFile, setActiveFile] = useState<string | null>(files[0] ?? null);
+  // 注释缓存: key = `${stage}:${path}`, 切回不重拉。
+  const [annoCache, setAnnoCache] = useState<Record<string, AnnotatedExplanation>>({});
   const [showAnnotations, setShowAnnotations] = useState(true);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // 已发起过的注释请求 key(去重)。
+  const requestedRef = useRef<Set<string>>(new Set());
+  // 当前在途请求归属的 cacheKey(响应回来时写到这里)。
+  const pendingKeyRef = useRef<string | null>(null);
 
-  // 切换文件/题目时: 重新拉源码 + 清空注释。
+  const stage = answered ? "explanation" : "orientation";
+
+  // 题目切换: 重置激活文件 + 清空注释缓存。
   useEffect(() => {
-    setAnnotated(null);
-    setAnnoStage("none");
-    if (sourceFilePath) {
-      sourceFetcher.load(`/learn/source?path=${encodeURIComponent(sourceFilePath)}`);
+    setActiveFile(files[0] ?? null);
+    setAnnoCache({});
+    requestedRef.current = new Set();
+    pendingKeyRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionId, files.join("|")]);
+
+  // 激活文件变化: 拉该文件源码。
+  useEffect(() => {
+    if (activeFile) {
+      sourceFetcher.load(`/learn/source?path=${encodeURIComponent(activeFile)}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceFilePath, questionId]);
+  }, [activeFile]);
 
-  const source = sourceFetcher.data;
-  const hasSource = source?.ok === true;
+  const source =
+    sourceFetcher.data?.ok && sourceFetcher.data.path === activeFile
+      ? sourceFetcher.data
+      : null;
+  const hasSource = source !== null;
+  const sourceLoading = sourceFetcher.state !== "idle" && !source;
 
-  // 拉注释: 未提交→导读(ai_orientation); 已提交→结合答案讲解(ai_explanation)。
-  // 用 annoStage 防重复触发; answered 翻转后会从 orientation 升级到 explanation。
+  const cacheKey = activeFile ? `${stage}:${activeFile}` : null;
+  const annotated = cacheKey ? (annoCache[cacheKey] ?? null) : null;
+
+  // 拉注释: 未提交→导读; 已提交→结合答案讲解。按 (stage, file) 缓存 + 去重。
   useEffect(() => {
-    if (!hasSource || !sourceFilePath) return;
-    if (!answered && annoStage === "none") {
-      setAnnoStage("orientation");
+    if (!hasSource || !activeFile || !cacheKey) return;
+    if (annoCache[cacheKey] || requestedRef.current.has(cacheKey)) return;
+    requestedRef.current.add(cacheKey);
+    pendingKeyRef.current = cacheKey;
+    if (stage === "orientation") {
       annoFetcher.submit(
-        { intent: "ai_orientation", path: sourceFilePath },
+        { intent: "ai_orientation", path: activeFile },
         { method: "post" },
       );
-    } else if (answered && annoStage !== "explanation") {
-      setAnnoStage("explanation");
+    } else {
       annoFetcher.submit(
-        { intent: "ai_explanation", questionId, questionType },
+        { intent: "ai_explanation", questionId, questionType, path: activeFile },
         { method: "post" },
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSource, answered, sourceFilePath, questionId]);
+  }, [hasSource, activeFile, cacheKey, stage]);
 
-  // 接住注释返回
+  // 接住注释返回, 归属到发起时记录的 cacheKey。
   useEffect(() => {
     if (annoFetcher.state !== "idle") return;
     const d = annoFetcher.data;
-    if (d?.ok) setAnnotated(d.annotated);
+    const key = pendingKeyRef.current;
+    if (d?.ok && key) {
+      setAnnoCache((prev) => ({ ...prev, [key]: d.annotated }));
+      pendingKeyRef.current = null;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [annoFetcher.state, annoFetcher.data]);
 
   const highlightLines = useMemo(() => {
-    if (!hasSource || !questionCode) return [];
+    if (!source || !questionCode) return [];
     return locateSnippetLines(source.code, questionCode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSource, questionCode, source]);
+  }, [source, questionCode]);
 
   // 注释/高亮就绪后, 滚动定位到首个相关行。
   useEffect(() => {
@@ -107,15 +136,24 @@ export function AnnotatedSourceCard({
   const annoError = annoFetcher.data && !annoFetcher.data.ok ? annoFetcher.data : null;
 
   function regenerate() {
-    if (!sourceFilePath) return;
-    if (answered) {
+    if (!activeFile || !cacheKey) return;
+    // 清掉本 key 的缓存与去重标记, 强制重拉。
+    setAnnoCache((prev) => {
+      const next = { ...prev };
+      delete next[cacheKey];
+      return next;
+    });
+    requestedRef.current.delete(cacheKey);
+    requestedRef.current.add(cacheKey);
+    pendingKeyRef.current = cacheKey;
+    if (stage === "orientation") {
       annoFetcher.submit(
-        { intent: "ai_explanation", questionId, questionType },
+        { intent: "ai_orientation", path: activeFile, force: "1" },
         { method: "post" },
       );
     } else {
       annoFetcher.submit(
-        { intent: "ai_orientation", path: sourceFilePath, force: "1" },
+        { intent: "ai_explanation", questionId, questionType, path: activeFile },
         { method: "post" },
       );
     }
@@ -153,6 +191,27 @@ export function AnnotatedSourceCard({
         </div>
       </header>
 
+      {/* 多文件 Tab */}
+      {files.length > 1 && (
+        <div className="flex flex-wrap gap-1 border-b border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-3 py-1.5">
+          {files.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setActiveFile(f)}
+              title={f}
+              className={`max-w-[16rem] truncate rounded-md px-2.5 py-1 font-mono text-xs transition-colors ${
+                f === activeFile
+                  ? "bg-[var(--brand-soft)] font-semibold text-[var(--brand-fg)]"
+                  : "text-[var(--fg-muted)] hover:bg-[var(--surface-raised)]"
+              }`}
+            >
+              {fileLabel(f)}
+            </button>
+          ))}
+        </div>
+      )}
+
       {annotated?.summary && showAnnotations && (
         <p className="border-b border-[var(--border-subtle)] bg-[var(--brand-soft)]/40 px-4 py-2 text-[13px] text-[var(--fg-primary)]">
           {annotated.summary}
@@ -160,9 +219,9 @@ export function AnnotatedSourceCard({
       )}
 
       <div ref={scrollRef} className="max-h-[60vh] overflow-y-auto p-3">
-        {!sourceFilePath ? (
+        {!activeFile ? (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">本题暂无关联源码文件。</p>
-        ) : sourceFetcher.state !== "idle" && !source ? (
+        ) : sourceLoading ? (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">加载源码中…</p>
         ) : hasSource ? (
           <AnnotatedCode
@@ -175,7 +234,9 @@ export function AnnotatedSourceCard({
           />
         ) : (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">
-            {source && !source.ok ? source.error : "该文件未收录源码"}
+            {sourceFetcher.data && !sourceFetcher.data.ok
+              ? sourceFetcher.data.error
+              : "该文件未收录源码"}
           </p>
         )}
         {annoError && (

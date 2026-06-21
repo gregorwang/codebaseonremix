@@ -10,13 +10,48 @@ export type AnnotatedCodeProps = {
   filePath?: string;
   /** 题目片段对应的行(高亮背景)。 */
   highlightLines?: number[];
-  /** 行锚定讲解, 渲染在各自 endLine 之后的注释行里。 */
+  /** 行锚定讲解, 按 placement 分流渲染(inline 行尾 / block 下方 / highlight 高亮行)。 */
   annotations?: CodeAnnotation[];
-  /** 是否显示讲解注释行(关掉=纯代码)。 */
+  /** 是否显示讲解注释(关掉=纯代码)。 */
   showAnnotations?: boolean;
   /** 行号 div 的 id 前缀, 供外部 scrollIntoView 定位。 */
   lineAnchorPrefix?: string;
 };
+
+/** 取注释 placement, 缺省视为 block。 */
+function placementOf(a: CodeAnnotation): "inline" | "block" | "highlight" {
+  return a.placement ?? "block";
+}
+
+/** 注释稳定 key(供 highlight 展开/收起)。 */
+function annoKey(a: CodeAnnotation, idx: number): string {
+  return `${a.startLine}-${a.endLine}-${idx}`;
+}
+
+/** 把 markdown 大致压成单行纯文本, 供 inline 注释 truncate 显示。 */
+function toPlainOneLine(md: string): string {
+  return md
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\*\*([^*]*)\*\*/g, "$1")
+    .replace(/\*([^*]*)\*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const infoIcon = (
+  <svg
+    className="h-3.5 w-3.5"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 16v-5M12 8h.01" />
+  </svg>
+);
 
 export function AnnotatedCode({
   code,
@@ -36,28 +71,65 @@ export function AnnotatedCode({
   const lines = useMemo(() => code.split("\n"), [code]);
   const [lineHtml, setLineHtml] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
+  // 已展开的 highlight 注释(点行尾 ⓘ 切换)。
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const highlightSet = useMemo(() => new Set(highlightLines), [highlightLines]);
 
-  // endLine -> 该行之后要插入的注释
-  const annotationsByEndLine = useMemo(() => {
-    const map = new Map<number, CodeAnnotation[]>();
-    for (const a of annotations) {
-      const arr = map.get(a.endLine) ?? [];
-      arr.push(a);
-      map.set(a.endLine, arr);
+  // 给每条注释一个稳定 key, 并按 placement 分桶。
+  const keyed = useMemo(
+    () => annotations.map((a, idx) => ({ a, key: annoKey(a, idx) })),
+    [annotations],
+  );
+
+  // endLine -> 行尾内联注释。
+  const inlineByEndLine = useMemo(() => {
+    const map = new Map<number, Array<{ a: CodeAnnotation; key: string }>>();
+    for (const item of keyed) {
+      if (placementOf(item.a) !== "inline") continue;
+      const arr = map.get(item.a.endLine) ?? [];
+      arr.push(item);
+      map.set(item.a.endLine, arr);
     }
     return map;
-  }, [annotations]);
+  }, [keyed]);
 
-  // 注释覆盖的行(背景轻提示)
-  const annotatedLineSet = useMemo(() => {
-    const s = new Set<number>();
-    for (const a of annotations) {
-      for (let n = a.startLine; n <= a.endLine; n++) s.add(n);
+  // endLine -> 下方块注释(block 始终 + 已展开的 highlight)。
+  const blockByEndLine = useMemo(() => {
+    const map = new Map<number, Array<{ a: CodeAnnotation; key: string }>>();
+    for (const item of keyed) {
+      const p = placementOf(item.a);
+      const isExpandedHighlight = p === "highlight" && expanded.has(item.key);
+      if (p !== "block" && !isExpandedHighlight) continue;
+      const arr = map.get(item.a.endLine) ?? [];
+      arr.push(item);
+      map.set(item.a.endLine, arr);
     }
-    return s;
-  }, [annotations]);
+    return map;
+  }, [keyed, expanded]);
+
+  // endLine -> highlight 注释(行尾放 ⓘ 切换)。
+  const highlightTogglesByEndLine = useMemo(() => {
+    const map = new Map<number, Array<{ a: CodeAnnotation; key: string }>>();
+    for (const item of keyed) {
+      if (placementOf(item.a) !== "highlight") continue;
+      const arr = map.get(item.a.endLine) ?? [];
+      arr.push(item);
+      map.set(item.a.endLine, arr);
+    }
+    return map;
+  }, [keyed]);
+
+  // 行级底色提示: block/inline 覆盖的行 vs highlight 覆盖的行(不同色)。
+  const { softLineSet, highlightAnnoLineSet } = useMemo(() => {
+    const soft = new Set<number>();
+    const hl = new Set<number>();
+    for (const { a } of keyed) {
+      const target = placementOf(a) === "highlight" ? hl : soft;
+      for (let n = a.startLine; n <= a.endLine; n++) target.add(n);
+    }
+    return { softLineSet: soft, highlightAnnoLineSet: hl };
+  }, [keyed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,81 +156,130 @@ export function AnnotatedCode({
     }
   }
 
+  function toggleExpand(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   const rows: React.ReactNode[] = [];
   for (let i = 0; i < lines.length; i++) {
     const lineNumber = i + 1;
     const highlighted = highlightSet.has(lineNumber);
-    const annotatedBg = showAnnotations && annotatedLineSet.has(lineNumber);
+    const annoHighlight = showAnnotations && highlightAnnoLineSet.has(lineNumber);
+    const annoSoft =
+      showAnnotations && !annoHighlight && softLineSet.has(lineNumber);
     const html = lineHtml?.[i];
 
+    const inlineNotes = showAnnotations ? inlineByEndLine.get(lineNumber) : undefined;
+    const toggleNotes = showAnnotations
+      ? highlightTogglesByEndLine.get(lineNumber)
+      : undefined;
+
+    // 代码内容区底色(只染内容区, 不染行号列, 避免整行大片留白被染成色块)。
+    const codeBg = highlighted
+      ? "bg-[var(--brand-soft-strong)]"
+      : annoHighlight
+        ? "bg-[var(--warning-soft)]"
+        : annoSoft
+          ? "bg-[var(--brand-soft)]/40"
+          : "";
+
     rows.push(
-      <div
-        key={`line-${lineNumber}`}
-        className={`flex ${
-          highlighted
-            ? "bg-[var(--brand-soft-strong)]"
-            : annotatedBg
-              ? "bg-[var(--brand-soft)]/40"
-              : ""
-        }`}
-      >
+      <div key={`line-${lineNumber}`} className="flex">
         <div
           id={`${lineAnchorPrefix}-${lineNumber}`}
           className={`shrink-0 select-none border-r border-[var(--code-border)] px-2 text-right font-mono text-xs leading-6 ${
             highlighted
               ? "text-[var(--brand-fg-strong)] font-semibold"
-              : "text-[var(--code-gutter-fg)]"
+              : annoHighlight
+                ? "text-[var(--warning-fg)] font-semibold"
+                : "text-[var(--code-gutter-fg)]"
           }`}
           style={{ minWidth: "3rem" }}
         >
           {lineNumber}
         </div>
-        <div className="min-w-0 flex-1 overflow-x-auto whitespace-pre px-3 font-mono text-sm leading-6 text-[var(--code-fg)]">
-          {html ? (
-            <span
-              className="learn-shiki"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
-          ) : (
-            <span>{lines[i] || " "}</span>
-          )}
+        <div className={`flex min-w-0 flex-1 items-center ${codeBg}`}>
+          <div className="min-w-0 flex-1 overflow-x-auto whitespace-pre px-3 font-mono text-sm leading-6 text-[var(--code-fg)]">
+            {html ? (
+              <span
+                className="learn-shiki"
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            ) : (
+              <span>{lines[i] || " "}</span>
+            )}
+          </div>
+          {/* 行尾 highlight ⓘ 切换 */}
+          {toggleNotes?.map(({ key }) => (
+            <button
+              key={`tg-${key}`}
+              type="button"
+              onClick={() => toggleExpand(key)}
+              className={`mr-1.5 inline-flex shrink-0 items-center rounded-md border px-1 py-0.5 transition-colors ${
+                expanded.has(key)
+                  ? "border-[var(--warning-border)] bg-[var(--warning-soft)] text-[var(--warning-fg)]"
+                  : "border-transparent text-[var(--warning-fg)]/70 hover:bg-[var(--warning-soft)]"
+              }`}
+              aria-label={expanded.has(key) ? "收起讲解" : "展开讲解"}
+            >
+              {infoIcon}
+            </button>
+          ))}
+          {/* 行尾内联短点评 */}
+          {inlineNotes?.map(({ a, key }) => {
+            const text = toPlainOneLine(a.note);
+            return (
+              <span
+                key={`il-${key}`}
+                className="ml-3 shrink-0 truncate pr-3 font-mono text-xs italic leading-6 text-[var(--brand-fg)]/80"
+                style={{ maxWidth: "45%" }}
+                title={a.note}
+              >
+                ◂ {text}
+              </span>
+            );
+          })}
         </div>
       </div>,
     );
 
-    if (showAnnotations) {
-      const notes = annotationsByEndLine.get(lineNumber);
-      if (notes) {
-        for (let k = 0; k < notes.length; k++) {
-          rows.push(
+    // 下方块注释(block + 展开的 highlight)
+    const blockNotes = showAnnotations ? blockByEndLine.get(lineNumber) : undefined;
+    if (blockNotes) {
+      for (const { a, key } of blockNotes) {
+        const isHl = placementOf(a) === "highlight";
+        rows.push(
+          <div
+            key={`note-${key}`}
+            className={`flex ${
+              isHl ? "bg-[var(--warning-soft)]/60" : "bg-[var(--brand-soft)]/60"
+            }`}
+          >
             <div
-              key={`note-${lineNumber}-${k}`}
-              className="flex bg-[var(--brand-soft)]/60"
+              className={`flex shrink-0 select-none items-start justify-end border-r border-[var(--code-border)] px-2 pt-1.5 ${
+                isHl ? "text-[var(--warning-fg)]" : "text-[var(--brand-fg)]"
+              }`}
+              style={{ minWidth: "3rem" }}
+              aria-hidden
             >
-              <div
-                className="flex shrink-0 select-none items-start justify-end border-r border-[var(--code-border)] px-2 pt-1 text-[var(--brand-fg)]"
-                style={{ minWidth: "3rem" }}
-                aria-hidden
-              >
-                <svg
-                  className="h-3.5 w-3.5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 16v-5M12 8h.01" />
-                </svg>
-              </div>
-              <div className="learn-annotation-note min-w-0 flex-1 border-l-2 border-[var(--brand-fg)]/40 px-3 py-1.5 text-[13px] leading-relaxed text-[var(--fg-primary)]">
-                <AiMarkdown text={notes[k]!.note} />
-              </div>
-            </div>,
-          );
-        }
+              {infoIcon}
+            </div>
+            <div
+              className={`learn-annotation-note min-w-0 flex-1 border-l-2 px-3 py-2 text-[13px] leading-relaxed text-[var(--fg-primary)] ${
+                isHl
+                  ? "border-[var(--warning-fg)]/40"
+                  : "border-[var(--brand-fg)]/40"
+              }`}
+            >
+              <AiMarkdown text={a.note} />
+            </div>
+          </div>,
+        );
       }
     }
   }

@@ -528,6 +528,9 @@ export type AiValidationResult = {
   warnings: string[];
 };
 
+/** 一条注释的标注形态。缺省视为 `block`。 */
+export type AnnotationPlacement = "inline" | "block" | "highlight";
+
 /** 行锚定的代码讲解: 一条注释贴在源码的某个行区间上。 */
 export type CodeAnnotation = {
   /** 1-based 起始行(已夹紧到文件范围内)。 */
@@ -536,6 +539,13 @@ export type CodeAnnotation = {
   endLine: number;
   /** 讲解内容(markdown)。 */
   note: string;
+  /**
+   * 标注形态(AI 自选, 解析时校验):
+   *  - inline:    行尾内联短点评(一句话, 渲染在 endLine 行右侧)。
+   *  - block:     下方整行详细讲解(可长, 默认形态)。
+   *  - highlight: 高亮 startLine..endLine 行区间, 行尾 ⓘ 点开看 note。
+   */
+  placement?: AnnotationPlacement;
 };
 
 /** AI 对一个源码文件的行锚定讲解输出(导读 / 结合答案讲解共用此形状)。 */

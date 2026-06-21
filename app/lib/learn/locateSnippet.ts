@@ -20,6 +20,10 @@ export function locateSnippetLines(fullCode: string, snippet: string): number[] 
   if (core.length === 0) return [];
 
   const firstLine = core[0]!;
+  const nonEmptyCore = core.filter((l) => l !== "").length;
+  // 命中阈值: 要求对齐窗口里至少有半数非空行真正匹配, 否则视为没找到。
+  // 否则"片段≈整文件 + 首行常见(如 import)"会让一整段被错误高亮成大蓝块。
+  const threshold = Math.max(1, Math.ceil(nonEmptyCore * 0.5));
   let bestIndex = -1;
   let bestScore = 0;
 
@@ -36,7 +40,7 @@ export function locateSnippetLines(fullCode: string, snippet: string): number[] 
     }
   }
 
-  if (bestIndex < 0) return [];
+  if (bestIndex < 0 || bestScore < threshold) return [];
 
   const spanEnd = Math.min(bestIndex + core.length, fullLines.length);
   const result: number[] = [];

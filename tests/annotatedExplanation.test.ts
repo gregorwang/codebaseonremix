@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseAnnotatedExplanation } from "~/lib/server/ai/aiSchemas.server";
 
 describe("parseAnnotatedExplanation", () => {
-  it("parses a clean JSON object", () => {
+  it("parses a clean JSON object (placement defaults to block)", () => {
     const raw = JSON.stringify({
       summary: "总览",
       annotations: [{ startLine: 2, endLine: 4, note: "讲解 `foo`" }],
@@ -10,8 +10,35 @@ describe("parseAnnotatedExplanation", () => {
     const out = parseAnnotatedExplanation(raw, 100);
     expect(out.summary).toBe("总览");
     expect(out.annotations).toEqual([
-      { startLine: 2, endLine: 4, note: "讲解 `foo`" },
+      { startLine: 2, endLine: 4, note: "讲解 `foo`", placement: "block" },
     ]);
+  });
+
+  it("keeps valid placement values (inline / highlight)", () => {
+    const raw = JSON.stringify({
+      summary: "s",
+      annotations: [
+        { startLine: 1, endLine: 1, note: "短", placement: "inline" },
+        { startLine: 3, endLine: 5, note: "盯这段", placement: "highlight" },
+      ],
+    });
+    const out = parseAnnotatedExplanation(raw, 100);
+    expect(out.annotations).toEqual([
+      { startLine: 1, endLine: 1, note: "短", placement: "inline" },
+      { startLine: 3, endLine: 5, note: "盯这段", placement: "highlight" },
+    ]);
+  });
+
+  it("falls back to block for unknown/missing placement", () => {
+    const raw = JSON.stringify({
+      summary: "s",
+      annotations: [
+        { startLine: 1, endLine: 1, note: "a", placement: "sidebar" },
+        { startLine: 2, endLine: 2, note: "b" },
+      ],
+    });
+    const out = parseAnnotatedExplanation(raw, 100);
+    expect(out.annotations.map((x) => x.placement)).toEqual(["block", "block"]);
   });
 
   it("strips ```json code fences before parsing", () => {
@@ -26,7 +53,12 @@ describe("parseAnnotatedExplanation", () => {
       annotations: [{ startLine: 0, endLine: 999, note: "x" }],
     });
     const out = parseAnnotatedExplanation(raw, 50);
-    expect(out.annotations[0]).toEqual({ startLine: 1, endLine: 50, note: "x" });
+    expect(out.annotations[0]).toEqual({
+      startLine: 1,
+      endLine: 50,
+      note: "x",
+      placement: "block",
+    });
   });
 
   it("fixes endLine < startLine by raising endLine to startLine", () => {
@@ -35,7 +67,12 @@ describe("parseAnnotatedExplanation", () => {
       annotations: [{ startLine: 10, endLine: 3, note: "x" }],
     });
     const out = parseAnnotatedExplanation(raw, 100);
-    expect(out.annotations[0]).toEqual({ startLine: 10, endLine: 10, note: "x" });
+    expect(out.annotations[0]).toEqual({
+      startLine: 10,
+      endLine: 10,
+      note: "x",
+      placement: "block",
+    });
   });
 
   it("drops annotations missing a note or with non-numeric startLine", () => {
@@ -48,7 +85,9 @@ describe("parseAnnotatedExplanation", () => {
       ],
     });
     const out = parseAnnotatedExplanation(raw, 100);
-    expect(out.annotations).toEqual([{ startLine: 5, endLine: 6, note: "keep" }]);
+    expect(out.annotations).toEqual([
+      { startLine: 5, endLine: 6, note: "keep", placement: "block" },
+    ]);
   });
 
   it("drops notes that echo a hard secret (sk- key / api_key=...)", () => {
@@ -60,7 +99,9 @@ describe("parseAnnotatedExplanation", () => {
       ],
     });
     const out = parseAnnotatedExplanation(raw, 100);
-    expect(out.annotations).toEqual([{ startLine: 2, endLine: 2, note: "正常讲解" }]);
+    expect(out.annotations).toEqual([
+      { startLine: 2, endLine: 2, note: "正常讲解", placement: "block" },
+    ]);
   });
 
   it("keeps legitimate teaching notes that mention auth concepts", () => {

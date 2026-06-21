@@ -175,7 +175,14 @@ export function parseAnnotatedExplanation(
       : start;
     if (end < start) end = start;
 
-    annotations.push({ startLine: start, endLine: end, note });
+    const placement =
+      item.placement === "inline" ||
+      item.placement === "block" ||
+      item.placement === "highlight"
+        ? item.placement
+        : "block";
+
+    annotations.push({ startLine: start, endLine: end, note, placement });
   }
 
   annotations.sort((a, b) => a.startLine - b.startLine);

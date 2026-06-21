@@ -449,8 +449,21 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         ? parseUserAnswer(formData, question.type)
         : null;
 
-    // 把被讲解文件的完整源码喂给 AI(优先题目来源文件, 回退到课程锚点文件)。
-    const sourcePath = question.sourceFilePath ?? lesson.sourceFilePath;
+    // 把被讲解文件的完整源码喂给 AI。
+    // 优先用客户端传来的 path(源码卡多文件 Tab 切换时), 但只认与本题相关的文件
+    // (sourceFilePath / touchedFiles / 课程锚点), 防止借 path 读任意文件; 否则回退默认锚点。
+    const requestedPath = String(formData.get("path") ?? "").trim();
+    const allowedFiles = new Set(
+      [
+        question.sourceFilePath,
+        ...(question.touchedFiles ?? []),
+        lesson.sourceFilePath,
+      ].filter((p): p is string => Boolean(p)),
+    );
+    const sourcePath =
+      requestedPath && allowedFiles.has(requestedPath)
+        ? requestedPath
+        : question.sourceFilePath ?? lesson.sourceFilePath;
     const sourceFile = sourcePath
       ? await getSourceFileContent(db, sourcePath)
       : null;
@@ -500,7 +513,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         abilityTags: question.abilityTags,
         mistakeType: latestAttempt.mistake_type ?? undefined,
         projectContext: course.projectContext,
-        sourceFilePath: question.sourceFilePath,
+        sourceFilePath: sourceFile?.path ?? question.sourceFilePath,
         fullFileCode: sourceFile?.code,
         fullFileLineCount: sourceFile?.lineCount ?? undefined,
       };
