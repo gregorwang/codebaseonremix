@@ -1,6 +1,6 @@
 import type { ProjectFileRow } from "~/lib/learn/types";
 import { assertSafeRemixPath } from "~/lib/learn/remixPath";
-import { validateAiSecurityContent } from "../ai/aiSchemas.server";
+import { containsHardSecret } from "../ai/aiSchemas.server";
 import { newId, nowIso } from "../learn/db-json.server";
 import {
   classifyFileKind,
@@ -17,9 +17,17 @@ export type ScannedFileInput = {
   content?: string;
 };
 
+/**
+ * 项目扫描器判定文件是否含**硬凭证**, 进而跳过入库。
+ *
+ * v3 起只检测真正高置信度的硬凭证特征(sk- key、api_key=xxx 字面赋值),
+ * 不再用 validateAiSecurityContent 那套宽松规则(它含 Bearer 正则和"绕过登录"关键词)——
+ * 那些规则适合校验 AI 输出/用户输入(防 AI 教唆绕过), 但用在"扫描真实源码并决定是否入库"
+ * 上会误伤 auth.server.ts 之类的鉴权文件(里面有 'Bearer ' 字面量做 token 解析),
+ * 导致整文件被跳过、做题卡讲解卡变小片段。
+ */
 export function shouldSkipFileContent(content: string): boolean {
-  const security = validateAiSecurityContent(content);
-  return !security.valid;
+  return containsHardSecret(content);
 }
 
 export async function persistScannedFiles(

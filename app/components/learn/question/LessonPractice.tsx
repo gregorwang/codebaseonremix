@@ -230,7 +230,6 @@ export function LessonPractice({
       {/* 卡1: 源码 + 行内 AI 讲解(答题前导读 / 答题后结合答案) */}
       <AnnotatedSourceCard
         files={sourceFiles}
-        questionCode={currentQuestionResolved.code}
         questionId={currentQuestionResolved.id}
         questionType={currentQuestionResolved.type}
         answered={submittedForCurrent}

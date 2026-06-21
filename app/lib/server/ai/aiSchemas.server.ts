@@ -113,13 +113,14 @@ export function mapGeneratedDifficulty(
 
 /** 高置信度的"硬凭证"特征(sk- key、api_key=xxx 形式)。
  *  注意: 不含 Bearer/关键词检查 —— 那些在讲代码(尤其鉴权代码)时会大量误伤,
- *  比如讲解里出现"校验 Bearer token"是正常教学, 不该被丢。 */
-const HARD_SECRET_PATTERNS = [
+ *  比如讲解里出现"校验 Bearer token"是正常教学, 不该被丢。
+ *  导出给项目扫描器用(scanner 判断"这个文件是否真的含硬凭证、是否跳过入库")。 */
+export const HARD_SECRET_PATTERNS = [
   /\bsk-[a-zA-Z0-9]{10,}\b/,
   /\b(api[_-]?key|secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-]{8,}/i,
 ];
 
-function containsHardSecret(text: string): boolean {
+export function containsHardSecret(text: string): boolean {
   return HARD_SECRET_PATTERNS.some((pattern) => pattern.test(text));
 }
 

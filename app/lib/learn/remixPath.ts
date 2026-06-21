@@ -1,4 +1,17 @@
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+// 项目源码扫描和读取共用的扩展名白名单。
+// 加 .css/.sql/.md/.json 是为了能讲解到题目 sourceFilePath 锚到的样式/迁移/文档文件。
+const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".css",
+  ".sql",
+  ".md",
+  ".json",
+]);
 
 export function assertSafeRemixPath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");

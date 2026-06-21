@@ -43,7 +43,11 @@ describe("assertSafeRemixPath", () => {
   });
 
   it("rejects unsupported extensions", () => {
-    expect(() => assertSafeRemixPath("app/data.json")).toThrow(
+    // .txt / 二进制类不在白名单(v3 起白名单含 .ts/.tsx/.js/.jsx/.mjs/.cjs/.css/.sql/.md/.json)。
+    expect(() => assertSafeRemixPath("app/data.txt")).toThrow(
+      "Unsupported file type",
+    );
+    expect(() => assertSafeRemixPath("app/logo.png")).toThrow(
       "Unsupported file type",
     );
   });

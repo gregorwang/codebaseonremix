@@ -1,5 +1,5 @@
 /** Bump to invalidate all learn public KV snapshots without wildcard delete. */
-export const LEARN_CACHE_VERSION = "v14";
+export const LEARN_CACHE_VERSION = "v15";
 
 export const PUBLIC_CACHE_TTL_SECONDS = 60 * 10;
 

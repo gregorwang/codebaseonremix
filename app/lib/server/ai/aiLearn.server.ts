@@ -1,6 +1,5 @@
 import type {
   AiQuestionDraft,
-  AnnotatedExplanation,
   CodeSnippet,
   Course,
   Difficulty,
@@ -17,7 +16,7 @@ import type { AbilityTag } from "~/lib/learn/abilityTags";
 import { parseJsonField } from "../learn/db-json.server";
 import { getUserAttempts } from "../learn/attempts.server";
 import { createValidatedAiDraft, AiDraftValidationError } from "../learn/aiDrafts.server";
-import { parseAnnotatedExplanation, validateQuestionBankShape } from "./aiSchemas.server";
+import { validateQuestionBankShape } from "./aiSchemas.server";
 import {
   AiGatewayError,
   callAiGateway,
@@ -45,8 +44,6 @@ export type AiLearnResult = {
   text: string;
   feature: AiFeature;
   hintLevel?: number;
-  /** 行锚定讲解(explanation / lesson_teaching 解析后填充)。 */
-  annotated?: AnnotatedExplanation;
 };
 
 export type GenerateQuestionsFromSnippetResult = {
@@ -303,11 +300,8 @@ export async function generateExplanation(
     input,
   });
 
-  const lineCount =
-    input.fullFileLineCount ??
-    (input.fullFileCode ?? input.code ?? "").split(/\r?\n/).length;
-  const annotated = parseAnnotatedExplanation(result.text, lineCount);
-  return { ...result, annotated };
+  // v3: AI 直接产 markdown 成品, 前端用 AiMarkdown 整块画。不再解析行锚定 JSON。
+  return result;
 }
 
 export async function generateMistakeSummary(
@@ -588,9 +582,9 @@ export async function generateLessonTeaching(
 }
 
 /* ----------------------------------------------------------------
- * generateCodeOrientation — 卡1 答题前的「读前导读」(行锚定 JSON)。
- * 与 generateLessonTeaching(markdown, 供 TeachingPhase) 是两条独立链路。
- * 输入是某个源码文件的完整代码; 输出 AnnotatedExplanation。
+ * generateCodeOrientation — 卡1 答题前的「读前导读」(markdown 成品)。
+ * 与 generateLessonTeaching(markdown, 供 TeachingPhase) 同栈但作用域不同(题目级 vs 关卡级)。
+ * 输入是某个源码文件的完整代码; 输出由 AI 自己组装的 markdown(含 ```代码块``` + 讲解)。
  * ---------------------------------------------------------------- */
 
 export async function generateCodeOrientation(
@@ -622,9 +616,8 @@ export async function generateCodeOrientation(
     input: { filePath: input.filePath },
   });
 
-  const lineCount = input.fileCode.split(/\r?\n/).length;
-  const annotated = parseAnnotatedExplanation(result.text, lineCount);
-  return { ...result, annotated };
+  // v3: AI 直接产 markdown 成品。
+  return result;
 }
 
 /* ----------------------------------------------------------------

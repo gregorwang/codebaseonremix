@@ -294,7 +294,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     }
   }
 
-  /* ---------- 文件级「读前导读」(行锚定 JSON, 按文件路径缓存) ---------- */
+  /* ---------- 文件级「读前导读」(markdown 成品, 按文件路径缓存) ---------- */
   if (intent === "ai_orientation") {
     const path = String(formData.get("path") ?? "").trim();
     if (!path) {
@@ -313,19 +313,15 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     if (!force && cache) {
       const cached = await cache.get(cacheKey);
       if (cached) {
-        try {
-          return data(
-            {
-              ok: true as const,
-              feature: "code_orientation" as const,
-              annotated: JSON.parse(cached),
-              fromCache: true,
-            },
-            responseHeadersEarly,
-          );
-        } catch {
-          /* 缓存损坏 → 落到重新生成 */
-        }
+        return data(
+          {
+            ok: true as const,
+            feature: "code_orientation" as const,
+            markdown: cached,
+            fromCache: true,
+          },
+          responseHeadersEarly,
+        );
       }
     }
 
@@ -346,9 +342,9 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         lessonFocus: lesson.learningGoal ?? lesson.description ?? "",
         abilityTags: lesson.lessonMeta?.abilityTags ?? [],
       });
-      if (cache && result.annotated) {
+      if (cache && result.text) {
         await cache
-          .put(cacheKey, JSON.stringify(result.annotated), {
+          .put(cacheKey, result.text, {
             expirationTtl: AI_TEACHING_TTL_SECONDS,
           })
           .catch((err) => console.warn("[ai_orientation] cache put failed", err));
@@ -357,7 +353,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         {
           ok: true as const,
           feature: "code_orientation" as const,
-          annotated: result.annotated ?? { summary: "", annotations: [] },
+          markdown: result.text,
           fromCache: false,
         },
         responseHeadersEarly,
@@ -541,7 +537,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         {
           ok: true as const,
           feature: "explanation" as const,
-          annotated: result.annotated ?? { summary: "", annotations: [] },
+          markdown: result.text,
         },
         responseHeaders,
       );

@@ -1,22 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
-import type { AnnotatedExplanation, QuestionType } from "~/lib/learn/types";
-import { locateSnippetLines } from "~/lib/learn/locateSnippet";
-import { AnnotatedCode } from "~/components/learn/code/AnnotatedCode";
+import type { QuestionType } from "~/lib/learn/types";
+import { AiMarkdown } from "~/components/learn/ui/AiMarkdown";
 
-type SourceData =
-  | { ok: true; path: string; code: string; language: string | null; lineCount: number | null }
-  | { ok: false; error: string };
-
+/**
+ * v3 数据形态: AI 直接返一整段 markdown 成品(含 ```代码块``` + 讲解),
+ * 前端用 AiMarkdown 整块渲染。前端不再做"按行号插注释"那种二次拼装,
+ * 也不再单独 GET /learn/source —— 全文是后端从 D1 取了塞进 AI prompt 的。
+ */
 type AnnoData =
-  | { ok: true; feature: "code_orientation" | "explanation"; annotated: AnnotatedExplanation; fromCache?: boolean }
+  | {
+      ok: true;
+      feature: "code_orientation" | "explanation";
+      markdown: string;
+      fromCache?: boolean;
+    }
   | { ok: false; error: string; code?: string };
 
 type AnnotatedSourceCardProps = {
   /** 本题相关的源码文件(相对 remix 路径), 第一个为默认激活。空数组表示无源码。 */
   files: string[];
-  /** 题目代码片段, 用于在全文里高亮定位(匹配不上的文件自动不高亮)。 */
-  questionCode?: string;
   questionId: string;
   questionType: QuestionType;
   /** 是否已提交本题(决定导读 vs 结合答案讲解)。 */
@@ -34,59 +37,49 @@ function fileLabel(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** 路径以 / 结尾 = 题目锚定的是目录(如 app/routes/) 而非单一文件, 不去拉全文。 */
+function isDirectoryPath(path: string): boolean {
+  return path.endsWith("/");
+}
+
 export function AnnotatedSourceCard({
   files,
-  questionCode,
   questionId,
   questionType,
   answered,
 }: AnnotatedSourceCardProps) {
-  const sourceFetcher = useFetcher<SourceData>();
   const annoFetcher = useFetcher<AnnoData>();
 
-  const [activeFile, setActiveFile] = useState<string | null>(files[0] ?? null);
-  // 注释缓存: key = `${stage}:${path}`, 切回不重拉。
-  const [annoCache, setAnnoCache] = useState<Record<string, AnnotatedExplanation>>({});
-  const [showAnnotations, setShowAnnotations] = useState(true);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  // 已发起过的注释请求 key(去重)。
+  // 只把"看起来是文件"的路径放入 Tab; 目录型路径不进 Tab。
+  const fileTabs = files.filter((f) => !isDirectoryPath(f));
+  const directoryHints = files.filter(isDirectoryPath);
+
+  const [activeFile, setActiveFile] = useState<string | null>(fileTabs[0] ?? null);
+  // markdown 缓存: key = `${stage}:${path}`, 切回不重拉。
+  const [mdCache, setMdCache] = useState<Record<string, string>>({});
+  // 已发起过的请求 key(去重)。
   const requestedRef = useRef<Set<string>>(new Set());
   // 当前在途请求归属的 cacheKey(响应回来时写到这里)。
   const pendingKeyRef = useRef<string | null>(null);
 
   const stage = answered ? "explanation" : "orientation";
 
-  // 题目切换: 重置激活文件 + 清空注释缓存。
+  // 题目切换: 重置激活文件 + 清空缓存。
   useEffect(() => {
-    setActiveFile(files[0] ?? null);
-    setAnnoCache({});
+    setActiveFile(fileTabs[0] ?? null);
+    setMdCache({});
     requestedRef.current = new Set();
     pendingKeyRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questionId, files.join("|")]);
 
-  // 激活文件变化: 拉该文件源码。
-  useEffect(() => {
-    if (activeFile) {
-      sourceFetcher.load(`/learn/source?path=${encodeURIComponent(activeFile)}`);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile]);
-
-  const source =
-    sourceFetcher.data?.ok && sourceFetcher.data.path === activeFile
-      ? sourceFetcher.data
-      : null;
-  const hasSource = source !== null;
-  const sourceLoading = sourceFetcher.state !== "idle" && !source;
-
   const cacheKey = activeFile ? `${stage}:${activeFile}` : null;
-  const annotated = cacheKey ? (annoCache[cacheKey] ?? null) : null;
+  const markdown = cacheKey ? (mdCache[cacheKey] ?? null) : null;
 
-  // 拉注释: 未提交→导读; 已提交→结合答案讲解。按 (stage, file) 缓存 + 去重。
+  // 拉讲解: 未提交→导读; 已提交→结合答案讲解。按 (stage, file) 缓存 + 去重。
   useEffect(() => {
-    if (!hasSource || !activeFile || !cacheKey) return;
-    if (annoCache[cacheKey] || requestedRef.current.has(cacheKey)) return;
+    if (!activeFile || !cacheKey) return;
+    if (mdCache[cacheKey] || requestedRef.current.has(cacheKey)) return;
     requestedRef.current.add(cacheKey);
     pendingKeyRef.current = cacheKey;
     if (stage === "orientation") {
@@ -101,44 +94,27 @@ export function AnnotatedSourceCard({
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSource, activeFile, cacheKey, stage]);
+  }, [activeFile, cacheKey, stage]);
 
-  // 接住注释返回, 归属到发起时记录的 cacheKey。
+  // 接住返回, 归属到发起时记录的 cacheKey。
   useEffect(() => {
     if (annoFetcher.state !== "idle") return;
     const d = annoFetcher.data;
     const key = pendingKeyRef.current;
     if (d?.ok && key) {
-      setAnnoCache((prev) => ({ ...prev, [key]: d.annotated }));
+      setMdCache((prev) => ({ ...prev, [key]: d.markdown }));
       pendingKeyRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [annoFetcher.state, annoFetcher.data]);
 
-  const highlightLines = useMemo(() => {
-    if (!source || !questionCode) return [];
-    return locateSnippetLines(source.code, questionCode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, questionCode]);
-
-  // 注释/高亮就绪后, 滚动定位到首个相关行。
-  useEffect(() => {
-    if (!hasSource) return;
-    const target =
-      highlightLines[0] ?? annotated?.annotations[0]?.startLine ?? null;
-    if (target == null) return;
-    const el = scrollRef.current?.querySelector<HTMLElement>(`#ac-line-${target}`);
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSource, annotated, highlightLines.join(",")]);
-
-  const annoLoading = annoFetcher.state !== "idle";
-  const annoError = annoFetcher.data && !annoFetcher.data.ok ? annoFetcher.data : null;
+  const loading = annoFetcher.state !== "idle";
+  const error = annoFetcher.data && !annoFetcher.data.ok ? annoFetcher.data : null;
 
   function regenerate() {
     if (!activeFile || !cacheKey) return;
     // 清掉本 key 的缓存与去重标记, 强制重拉。
-    setAnnoCache((prev) => {
+    setMdCache((prev) => {
       const next = { ...prev };
       delete next[cacheKey];
       return next;
@@ -159,6 +135,13 @@ export function AnnotatedSourceCard({
     }
   }
 
+  // 卡顶部 path 提示用的 active file 显示名。
+  const activeFileLabel = activeFile
+    ? `remix/${activeFile}`
+    : directoryHints[0]
+      ? `remix/${directoryHints[0]} (目录评审)`
+      : null;
+
   return (
     <section className="studio-card overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-4 py-2.5">
@@ -168,33 +151,26 @@ export function AnnotatedSourceCard({
             代码 + AI 讲解
             <span className="ml-2 text-xs font-normal text-[var(--fg-soft)]">
               {answered ? "结合你的答案" : "读前导读"}
-              {annoLoading && " · 生成中…"}
+              {loading && " · 生成中…"}
             </span>
           </h3>
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs">
           <button
             type="button"
-            onClick={() => setShowAnnotations((v) => !v)}
-            className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-raised)] px-2 py-0.5 text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-sunken)]"
-          >
-            {showAnnotations ? "隐藏讲解" : "显示讲解"}
-          </button>
-          <button
-            type="button"
             onClick={regenerate}
-            disabled={annoLoading || !hasSource}
+            disabled={loading || !activeFile}
             className="font-medium text-[var(--brand-fg)] hover:underline disabled:opacity-50"
           >
-            {annoLoading ? "生成中…" : "重新生成"}
+            {loading ? "生成中…" : "重新生成"}
           </button>
         </div>
       </header>
 
-      {/* 多文件 Tab */}
-      {files.length > 1 && (
+      {/* 多文件 Tab(只列真实文件; 目录型不进 Tab) */}
+      {fileTabs.length > 1 && (
         <div className="flex flex-wrap gap-1 border-b border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-3 py-1.5">
-          {files.map((f) => (
+          {fileTabs.map((f) => (
             <button
               key={f}
               type="button"
@@ -212,36 +188,36 @@ export function AnnotatedSourceCard({
         </div>
       )}
 
-      {annotated?.summary && showAnnotations && (
-        <p className="border-b border-[var(--border-subtle)] bg-[var(--brand-soft)]/40 px-4 py-2 text-[13px] text-[var(--fg-primary)]">
-          {annotated.summary}
+      {/* 当前讲解的文件标签 */}
+      {activeFileLabel && (
+        <p className="border-b border-[var(--border-subtle)] bg-[var(--surface-sunken)]/60 px-4 py-1.5 font-mono text-[11px] text-[var(--fg-soft)]">
+          {activeFileLabel}
         </p>
       )}
 
-      <div ref={scrollRef} className="max-h-[60vh] overflow-y-auto p-3">
-        {!activeFile ? (
+      <div className="max-h-[70vh] overflow-y-auto p-4">
+        {fileTabs.length === 0 && directoryHints.length === 0 ? (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">本题暂无关联源码文件。</p>
-        ) : sourceLoading ? (
-          <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">加载源码中…</p>
-        ) : hasSource ? (
-          <AnnotatedCode
-            code={source.code}
-            language={source.language ?? undefined}
-            filePath={`remix/${source.path}`}
-            highlightLines={highlightLines}
-            annotations={annotated?.annotations ?? []}
-            showAnnotations={showAnnotations}
-          />
+        ) : fileTabs.length === 0 && directoryHints.length > 0 ? (
+          // 纯目录型: 没有可拉全文的文件, 提示用户这是目录评审题
+          <div className="space-y-3 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--surface-sunken)]/40 p-4 text-sm text-[var(--fg-muted)]">
+            <p>
+              本题的关注范围是整个目录 <code className="rounded bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-xs">{directoryHints[0]}</code>，没有单一源码文件可以展示全文。
+            </p>
+            <p>请结合下方"题目"卡里的代码片段作答；提交后这里会出现"结合你的答案"的目录评审讲解。</p>
+          </div>
+        ) : !markdown && loading ? (
+          <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">AI 生成中…</p>
+        ) : markdown ? (
+          <AiMarkdown text={markdown} />
         ) : (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">
-            {sourceFetcher.data && !sourceFetcher.data.ok
-              ? sourceFetcher.data.error
-              : "该文件未收录源码"}
+            {error?.error ?? "等待 AI 讲解…"}
           </p>
         )}
-        {annoError && (
+        {error && markdown && (
           <p className="mt-2 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
-            {annoError.error}
+            {error.error}
           </p>
         )}
       </div>
