@@ -1,0 +1,8 @@
+# Copy to .dev.vars for local AI Gateway (same as Nemesis personal site).
+NEMESIS_AI_GATEWAY_ID=your-gateway-id
+CF_AIG_TOKEN=your-cf-aig-token
+CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+CODE_COACH_AI_MODEL=google-ai-studio/gemini-3.1-flash-lite
+
+# Copy your learn_uid cookie value(s) from browser devtools (comma-separated)
+LEARN_ADMIN_UIDS=your-learn-uid-here

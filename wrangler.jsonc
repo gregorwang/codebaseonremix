@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "code-coach-worker",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./build/client"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "code-coach-db",
+      "database_id": "86734356-1259-4dc8-88e8-f8c116501477",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "LEARN_CACHE",
+      "id": "5ee032cb904e44dab82ce7a5ab1dc21e",
+      "preview_id": "16957e93bce94b86bf3eb0879256e9df"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "NEMESIS_AI_GATEWAY_ID": "my-ai-gateway",
+    "CLOUDFLARE_ACCOUNT_ID": "fb9830705da200eab2799ed0d487c197",
+    "CODE_COACH_AI_MODEL": "google-ai-studio/gemini-3.1-flash-lite"
+  }
+}

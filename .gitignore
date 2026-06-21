@@ -1,0 +1,17 @@
+node_modules/
+.wrangler/
+build/
+.react-router/
+dist/
+.dev.vars
+*.log
+.DS_Store
+
+# 兄弟项目 remix/ 是独立的 git 仓库(gregorwang/remix-cloudflare), 不并入本仓库
+remix/
+# 本地工具配置 / 临时 D1 导出
+.claude/
+.cursor/
+.history/
+.vscode/
+.tmp-*.sql

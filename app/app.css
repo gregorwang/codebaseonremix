@@ -1,0 +1,320 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Code Coach – Studio design tokens
+   --------------------------------------------------------------------------- */
+@theme {
+  --font-sans: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+
+  --color-brand-50: #eef1ff;
+  --color-brand-100: #e0e6ff;
+  --color-brand-200: #c5cffd;
+  --color-brand-300: #a5b1fa;
+  --color-brand-400: #8a90f5;
+  --color-brand-500: #6e6ef0;
+  --color-brand-600: #5b56e6;
+  --color-brand-700: #4944c8;
+  --color-brand-800: #3b3aa1;
+  --color-brand-900: #2f307c;
+  --color-brand-950: #1d1d4a;
+
+  --color-accent-400: #f6b65c;
+  --color-accent-500: #ee9b3a;
+  --color-accent-600: #d97f1c;
+
+  --radius-card: 1rem;
+  --radius-card-lg: 1.25rem;
+  --radius-pill: 9999px;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 1px rgb(15 23 42 / 0.03);
+  --shadow-pop: 0 8px 24px -8px rgb(91 86 230 / 0.25),
+    0 4px 8px -4px rgb(15 23 42 / 0.08);
+  --shadow-focus: 0 0 0 3px rgb(110 110 240 / 0.25);
+}
+
+/* CSS variables consumed via arbitrary-value Tailwind utilities
+   (e.g. bg-[--surface-raised], border-[--border-subtle]) */
+:root {
+  color-scheme: light;
+
+  --surface-base: #fafbff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f4f5fb;
+  --surface-overlay: #ffffffee;
+  --surface-inset: #eef0f8;
+
+  --border-subtle: rgb(226 232 240);
+  --border-strong: rgb(203 213 225);
+  --border-focus: rgb(110 110 240);
+  --border-soft-brand: rgb(176 180 248 / 0.55);
+
+  --fg-primary: rgb(15 23 42);
+  --fg-muted: rgb(71 85 105);
+  --fg-soft: rgb(100 116 139);
+  --fg-faint: rgb(148 163 184);
+
+  --brand-soft: rgb(110 110 240 / 0.10);
+  --brand-soft-strong: rgb(110 110 240 / 0.18);
+  --brand-fg: rgb(73 68 200);
+  --brand-fg-strong: rgb(59 58 161);
+
+  --accent-soft: rgb(238 155 58 / 0.14);
+  --accent-fg: rgb(180 95 12);
+
+  --success-soft: rgb(16 185 129 / 0.12);
+  --success-fg: rgb(5 150 105);
+  --success-border: rgb(167 243 208);
+  --danger-soft: rgb(244 63 94 / 0.10);
+  --danger-fg: rgb(190 18 60);
+  --danger-border: rgb(252 165 165);
+  --warning-soft: rgb(245 158 11 / 0.12);
+  --warning-fg: rgb(180 83 9);
+  --warning-border: rgb(253 230 138);
+  --info-soft: rgb(100 116 139 / 0.10);
+  --info-fg: rgb(71 85 105);
+  --info-border: rgb(203 213 225);
+
+  --code-bg: #f6f8fc;
+  --code-fg: #0f172a;
+  --code-border: rgb(226 232 240);
+  --code-line-hl: rgb(110 110 240 / 0.10);
+  --code-gutter-fg: rgb(148 163 184);
+
+  --hairline: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(110 110 240 / 0.18) 35%,
+    rgb(238 155 58 / 0.18) 65%,
+    transparent 100%
+  );
+
+  --bg-pattern: radial-gradient(
+      1200px 600px at 0% -10%,
+      rgb(110 110 240 / 0.06) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 500px at 100% 0%,
+      rgb(238 155 58 / 0.05) 0%,
+      transparent 60%
+    );
+}
+
+.dark {
+  color-scheme: dark;
+
+  --surface-base: #0a0d1a;
+  --surface-raised: #11152a;
+  --surface-sunken: #0d1024;
+  --surface-overlay: #11152acc;
+  --surface-inset: #161a33;
+
+  --border-subtle: rgb(40 46 75);
+  --border-strong: rgb(63 71 110);
+  --border-focus: rgb(138 144 245);
+  --border-soft-brand: rgb(95 95 200 / 0.45);
+
+  --fg-primary: rgb(226 232 240);
+  --fg-muted: rgb(148 163 184);
+  --fg-soft: rgb(148 163 184);
+  --fg-faint: rgb(100 116 139);
+
+  --brand-soft: rgb(138 144 245 / 0.16);
+  --brand-soft-strong: rgb(138 144 245 / 0.26);
+  --brand-fg: rgb(180 184 248);
+  --brand-fg-strong: rgb(199 202 252);
+
+  --accent-soft: rgb(246 182 92 / 0.16);
+  --accent-fg: rgb(246 182 92);
+
+  --success-soft: rgb(16 185 129 / 0.18);
+  --success-fg: rgb(110 231 183);
+  --success-border: rgb(16 185 129 / 0.4);
+  --danger-soft: rgb(244 63 94 / 0.18);
+  --danger-fg: rgb(253 164 175);
+  --danger-border: rgb(244 63 94 / 0.4);
+  --warning-soft: rgb(245 158 11 / 0.18);
+  --warning-fg: rgb(252 211 77);
+  --warning-border: rgb(245 158 11 / 0.4);
+  --info-soft: rgb(148 163 184 / 0.14);
+  --info-fg: rgb(203 213 225);
+  --info-border: rgb(71 85 105);
+
+  --code-bg: #0c1024;
+  --code-fg: #d6dbf0;
+  --code-border: rgb(40 46 75);
+  --code-line-hl: rgb(138 144 245 / 0.16);
+  --code-gutter-fg: rgb(100 116 139);
+
+  --hairline: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(138 144 245 / 0.30) 35%,
+    rgb(246 182 92 / 0.22) 65%,
+    transparent 100%
+  );
+
+  --bg-pattern: radial-gradient(
+      1200px 600px at 0% -10%,
+      rgb(110 110 240 / 0.10) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 500px at 100% 0%,
+      rgb(238 155 58 / 0.06) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      circle at 1px 1px,
+      rgb(138 144 245 / 0.04) 1px,
+      transparent 1px
+    );
+  --bg-pattern-size: auto, auto, 28px 28px;
+}
+
+/* ---------------------------------------------------------------------------
+   Body / global background
+   --------------------------------------------------------------------------- */
+html,
+body {
+  background-color: var(--surface-base);
+  color: var(--fg-primary);
+}
+
+body {
+  background-image: var(--bg-pattern);
+  background-attachment: fixed;
+  background-repeat: no-repeat, no-repeat, repeat;
+}
+
+.dark body {
+  background-size: var(--bg-pattern-size);
+}
+
+/* ---------------------------------------------------------------------------
+   Code blocks – tokenised
+   --------------------------------------------------------------------------- */
+pre code {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.learn-code-block {
+  margin-top: 1rem;
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  border: 1px solid var(--code-border);
+  background: var(--code-bg);
+  padding: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--code-fg);
+}
+
+.learn-shiki pre {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+}
+
+.learn-code-panel {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--code-border);
+}
+
+.learn-code-panel .learn-shiki code {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Reusable component styles (kept thin – most styling is Tailwind utilities)
+   --------------------------------------------------------------------------- */
+.studio-card {
+  position: relative;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.studio-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--hairline);
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.studio-card-interactive {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.studio-card-interactive:hover {
+  border-color: var(--border-soft-brand);
+  box-shadow: var(--shadow-pop);
+  transform: translateY(-1px);
+}
+
+.studio-pill {
+  border-radius: var(--radius-pill);
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+}
+
+.studio-hairline {
+  background: var(--hairline);
+}
+
+.studio-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Subtle shake used by FillBlank wrong feedback */
+@keyframes studio-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+.studio-shake {
+  animation: studio-shake 0.3s ease-in-out;
+}
+
+/* Sticky bottom action bar floating pill */
+.studio-floating-bar {
+  background-color: var(--surface-overlay);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-pop);
+}

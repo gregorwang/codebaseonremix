@@ -1,0 +1,526 @@
+/**
+ * Real questions for site-14-loader-read / typed-loader.
+ *
+ * Anchor: remix/app/root.tsx L32-46 (loader) + Layout L78 (useLoaderData<typeof loader>()).
+ * 学习目标: 理解 loader 返回类型自动推导, useLoaderData<typeof loader>() 拿强类型 data.
+ *
+ * 题目数: 22 (basic 6 / code-reading 5 / state-reasoning 4 / ai-review 5 /
+ *         free-response 2).
+ *
+ * 引用 recipe: tsSseEventWiden (§12.2-TS-4) — 涉及类型收窄与 union.
+ */
+
+import { q } from "../../types";
+import type { RealQ } from "../index";
+import { tsSseEventWiden } from "../recipes";
+
+const PRIMARY = "app/root.tsx";
+const TOUCHED = [PRIMARY, "app/utils/theme.server.ts", "app/lib/auth.server.ts"];
+
+export const typedLoaderQuestions: RealQ[] = [
+  // ─── 基础识别 (Q1-Q6) ────────────────────────────────────────────────────
+  q({
+    type: "single_choice",
+    title: "Q1 useLoaderData 类型参数",
+    prompt: "Layout 里的 useLoaderData<typeof loader>() 类型参数 typeof loader 含义?",
+    options: [
+      { id: "A", text: "loader 函数本身的类型, RR 7 推导其返回 Promise<json 数据>, useLoaderData 拿 data 强类型" },
+      { id: "B", text: "Performance" },
+      { id: "C", text: "TS 限制" },
+      { id: "D", text: "无意义" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "typeof loader 拿到 loader 函数类型, RR 7 推导其 json() 返回的 data shape.",
+      detail: "useLoaderData<typeof loader>() 是 RR 7 标准模式, typeof loader 是 TypeScript 的 '取函数类型' 操作, useLoaderData 内部用其推导 data 的形状, 字段访问强类型保护.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q2 SerializeFrom 含义",
+    prompt: "useLoaderData 返回 SerializeFrom<typeof loader>, SerializeFrom 是什么?",
+    options: [
+      { id: "A", text: "RR 7 提供的工具类型, 把 loader 返回的 Date / Map / Set 等转成可 JSON 序列化的形式" },
+      { id: "B", text: "性能优化" },
+      { id: "C", text: "TS 限制" },
+      { id: "D", text: "无意义" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "SerializeFrom 把 Date / Map / Set 转 JSON 兼容形式 (string / object / array).",
+      detail: "RR 7 内部用 SerializeFrom 处理 loader 数据的跨边界传输, Date 变 string, Map 变 object, Set 变 array. 客户端拿到的永远是 JSON 兼容类型.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q3 data?.theme 类型",
+    prompt: "const data = useLoaderData<typeof loader>(); const theme = data?.theme || 'light'; data?.theme 的类型?",
+    options: [
+      { id: "A", text: "Theme (loader 已收窄, 不会返回 null)" },
+      { id: "B", text: "string | null" },
+      { id: "C", text: "any" },
+      { id: "D", text: "string | undefined" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "data?.theme 类型 Theme, loader 已收窄过, 不会是 string / null.",
+      detail: "loader 内部 getTheme 收窄到 'light' | 'dark', json 返回 Theme union. SerializeFrom 透传, data.theme 类型 Theme. data?.theme 兜底 nullish union (data 是 undefined).",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "fill_blank",
+    title: "Q4 json 返回类型",
+    prompt: "return json({ theme, session: toPublicSession(session), ... }) 的返回类型? json<T> 是泛型, RR 7 推导 T 为 { theme: Theme, session: PublicSession, googleClientId: string, appUrl: string, authPreviewEnabled: boolean }.",
+    options: [],
+    correctAnswer: { values: { v: "SerializeFrom<typeof loader>" } },
+    blanks: [{ id: "v", placeholder: "类型", acceptedAnswers: ["SerializeFrom<typeof loader>", "useLoaderData<typeof loader>", "json 泛型 T"] }],
+    explanation: {
+      short: "json() 推导为对象字面量类型, useLoaderData<typeof loader> 拿到同样的 shape.",
+      detail: "TS 推导 json 的字面量, SerializeFrom 处理跨边界, useLoaderData 拿到 SSR 与 CSR 一致的类型.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "multi_choice",
+    title: "Q5 loader 推导能力",
+    prompt: "TypeScript 能从 loader 推导的? (多选)",
+    options: [
+      { id: "A", text: "字段名 / 字段类型" },
+      { id: "B", text: "字段 nullable 状态" },
+      { id: "C", text: "字段被 SerializeFrom 处理后的形式" },
+      { id: "D", text: "AI 生成的" },
+    ],
+    correctAnswer: { choiceIds: ["A", "B", "C"] },
+    explanation: {
+      short: "字段名 + 字段类型 + nullable + SerializeFrom 全部推导.",
+      detail: "TS 推导能力极强, loader 内 await getTheme 返回 Theme, await getSessionCached 返回 Session | null, getEnvVar 返回 string | undefined, SerializeFrom 全部展开. 客户端拿到完整类型保护.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q6 Layout vs App 类型",
+    prompt: "Layout 用 useLoaderData<typeof loader>() 拿 theme, App 也用 useLoaderData<typeof loader>() 拿 session. 两者类型?",
+    options: [
+      { id: "A", text: "完全一样, 都是 SerializeFrom<typeof loader>, 共享同一份 data 引用" },
+      { id: "B", text: "不同" },
+      { id: "C", text: "App 多字段" },
+      { id: "D", text: "Layout 少字段" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "Layout 与 App 拿到的是同一份 data, 类型完全一样.",
+      detail: "RR 7 内部 useLoaderData 共享 context, Layout 拿 data 之后 App 拿同一个 data 引用. 两者类型一致, 只是解构出不同字段.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+
+  // ─── 读代码 (Q7-Q11) ────────────────────────────────────────────────────
+  q({
+    type: "line_pick",
+    title: "Q7 关键行: useLoaderData 调用",
+    prompt: "const data = useLoaderData<typeof loader>(); 出现在 root.tsx Layout 哪一行?",
+    code: `1 export function Layout({ children }: { children: React.ReactNode }) {
+2   const data = useLoaderData<typeof loader>();
+3   const theme = data?.theme || "light";`,
+    options: [],
+    linePickLines: [
+      { id: "L1", lineNumber: 1, text: "export function Layout({ children }: { children: React.ReactNode }) {" },
+      { id: "L2", lineNumber: 2, text: "const data = useLoaderData<typeof loader>();" },
+      { id: "L3", lineNumber: 3, text: "const theme = data?.theme || 'light';" },
+    ],
+    correctAnswer: { lineId: "L2" },
+    explanation: {
+      short: "第 2 行 useLoaderData<typeof loader> 拿强类型 data.",
+      detail: "typeof loader 推导 json() 返回类型, useLoaderData 拿到 SerializeFrom 形式, data.theme 强类型 Theme.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q8 Session 内部字段 client 不可见",
+    prompt: "data.session 拿到的是 Session 还是 PublicSession?",
+    options: [
+      { id: "A", text: "PublicSession, toPublicSession 已经脱敏, 内部字段已过滤" },
+      { id: "B", text: "Session" },
+      { id: "C", text: "any" },
+      { id: "D", text: "无" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "data.session 是 PublicSession, toPublicSession 已经过滤.",
+      detail: "loader 内 session: toPublicSession(session), 即使传入 null 也会原样透传. data.session 类型 PublicSession | null, 没有 sessionSecret / csrfToken / internalUserId 等敏感字段.",
+    },
+    abilityTags: ["backend.session.cookie"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY, "app/lib/auth.server.ts"],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q9 LoaderFunctionArgs 解构",
+    prompt: "loader 签名 ({ request }: LoaderFunctionArgs) 解构 request, 还可以解构什么?",
+    options: [
+      { id: "A", text: "params (路由参数), context (loadContext, 包含 Cloudflare env)" },
+      { id: "B", text: "body" },
+      { id: "C", text: "headers" },
+      { id: "D", text: "无" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "params 是路由参数, context 是 loadContext (Cloudflare env).",
+      detail: "LoaderFunctionArgs = { request, params, context }. params 用于 :slug 类路由, context 是 RR 7 loadContext, 内部封装 Cloudflare env / ctx, getCloudflareContext 替代品.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "multi_choice",
+    title: "Q10 typeof loader vs 显式类型",
+    prompt: "用 typeof loader 而不是显式定义类型的好处? (多选)",
+    options: [
+      { id: "A", text: "自动跟随 loader 修改, 字段加减不用同步更新类型" },
+      { id: "B", text: "避免重复定义, 单一 source of truth" },
+      { id: "C", text: "性能优化" },
+      { id: "D", text: "无意义" },
+    ],
+    correctAnswer: { choiceIds: ["A", "B"] },
+    explanation: {
+      short: "typeof loader 跟随 loader 自动更新, 避免类型与实现漂移.",
+      detail: "显式定义类型容易与 loader 实现漂移, 例如加字段忘了改 type. typeof loader 让类型完全跟随实现, TS 推导零成本.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q11 SSR data 与 client data 一致性",
+    prompt: "loader 在 SSR 跑, useLoaderData 在 client 跑, 两次 data 是否一致?",
+    options: [
+      { id: "A", text: "是, RR 7 把 SSR 跑出来的 data 序列化到 window.__remixContext, client 复用同一份" },
+      { id: "B", text: "否" },
+      { id: "C", text: "随机" },
+      { id: "D", text: "看 timing" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "RR 7 把 SSR data 序列化到 __remixContext, client 复用同一份, 保证 hydration 一致.",
+      detail: "RR 7 的核心机制: SSR 阶段 loader 跑完, data 序列化到 window.__remixContext, client 启动时 RR 从 context 拿, 跳过 revalidation. 任何不一致会触发 hydration warning.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "mixed-risk",
+    touchedFiles: [PRIMARY],
+  }),
+
+  // ─── 状态推演 (Q12-Q15) ─────────────────────────────────────────────────
+  q({
+    type: "branch_trace",
+    title: "Q12 字段拼错时 TS 行为",
+    prompt: "data?.themee 访问 (拼错), TS 编译期?",
+    options: [
+      { id: "type", text: "TS 编译失败: 'themee' does not exist on type" },
+      { id: "runtime", text: "不会到运行时" },
+      { id: "fix", text: "开发者看到红线立即修复" },
+    ],
+    correctAnswer: { pathIds: ["type", "runtime", "fix"] },
+    explanation: {
+      short: "TS 编译期拒绝, 开发者立即看到错误.",
+      detail: "useLoaderData<typeof loader>() 拿到强类型, 字段名拼写错 TS 报 'Property themee does not exist'. 不需要到运行时才发现.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "branch_trace",
+    title: "Q13 loader 改字段后 client 行为",
+    prompt: "loader 增加字段 data.user = 'admin', Layout / App 访问 data.user?",
+    options: [
+      { id: "compile", text: "Layout 访问 data.user, TS 报 'Property user does not exist' (typeof loader 已经更新)" },
+      { id: "fix", text: "开发者加新字段访问代码, TS 通过" },
+      { id: "ship", text: "部署后新功能上线" },
+    ],
+    correctAnswer: { pathIds: ["compile", "fix", "ship"] },
+    explanation: {
+      short: "typeof loader 自动跟随, 新字段可用, 旧字段访问仍 OK.",
+      detail: "TS 推导跟随 loader 实时更新, 新增 data.user 字段后, 任何访问 data.user 都有强类型. 旧字段访问仍正常. 类型与实现保持一致.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q14 layout-html 的 data.theme null 时",
+    prompt: "loader 抛错时, data?.theme 的值?",
+    options: [
+      { id: "A", text: "data 是 undefined, theme = 'light' (兜底)" },
+      { id: "B", text: "抛错" },
+      { id: "C", text: "null" },
+      { id: "D", text: "无" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "loader 抛错走 ErrorBoundary, Layout 根本不渲染, 但如果 data 临时 undefined 也会兜底.",
+      detail: "loader 抛错 → ErrorBoundary 接管, 走 NotFound404 / RouteErrorBoundary, Layout 不会被调用. 但在 useNavigation 切换时, data 可能是 undefined (loader 正在跑), 兜底 'light' 防止 className 缺失.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q15 Layout 与 App 拿的 data 是同一份吗",
+    prompt: "Layout 与 App 两次 useLoaderData, 是不是同一次 loader 调用的结果?",
+    options: [
+      { id: "A", text: "是, RR 7 内部 useLoaderData 用 context 共享, Layout 拿 data 之后 App 拿同一份" },
+      { id: "B", text: "否, 各自重新调 loader" },
+      { id: "C", text: "随机" },
+      { id: "D", text: "看版本" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "RR 7 共享 context, Layout 与 App 拿到同一份 data, 不会重新调 loader.",
+      detail: "RR 7 的 useLoaderData 内部从 React context 拿 data, Layout 与 App 都从同一 context 读. 一次 loader 调用, 多个 useLoaderData 共享. 这是 RR 与 RSC 数据流的本质区别.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+
+  // ─── AI 审查 (Q16-Q20) ──────────────────────────────────────────────────
+  q({
+    type: "ai_review",
+    title: "Q16 AI 把 typeof loader 改成 any",
+    prompt: "AI 改坏: AI 觉得 typeof loader '复杂' 改成 useLoaderData<any>(). 后果是?",
+    options: [
+      { id: "A", text: "data 退化为 any, 字段拼写错误不报, 失去 loader 强类型契约" },
+      { id: "B", text: "更灵活" },
+      { id: "C", text: "TS 报错" },
+      { id: "D", text: "无影响" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "any 退化了 useLoaderData 的强类型保护, 字段错误不报.",
+      detail: "any 等于关掉 TS 检查, data.theme 拼错成 data.themee 不报错, 运行时拿 undefined. AI 经典 'any 灵活' 反模式, 失去 RR 类型契约的最大价值.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "字段拼错编译过, 运行时 undefined, 排查耗时, 类型保护失效.",
+    aiReviewRisk: "把 any 当成'灵活', 退化了 RR 7 强类型契约.",
+    wrongAnswerFeedback: {
+      B: "灵活不是退化的理由.",
+      C: "TS 不会报错, any 关闭检查.",
+      D: "有类型保护损失.",
+    },
+  }),
+  q({
+    type: "ai_review",
+    title: "Q17 AI 把 SerializeFrom 删了",
+    prompt: "AI 改坏: AI 觉得 SerializeFrom '多余' 改成 useLoaderData<Awaited<ReturnType<typeof loader>>>(). 后果是?",
+    options: [
+      { id: "A", text: "丢失 RR 7 的 Date / Map 跨边界处理, 客户端拿到 Date object 但 layout 直接 toString 当 string 用崩" },
+      { id: "B", text: "更直接" },
+      { id: "C", text: "TS 报错" },
+      { id: "D", text: "无影响" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "丢失 SerializeFrom 处理, Date / Map 等跨边界数据不一致.",
+      detail: "Awaited<ReturnType<...>> 是 loader 原始返回, Date 仍是 Date object, 跨 SSR / CSR 边界 SSR 序列化 Date 为 string, client 拿到 string. 类型不匹配直接崩.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "Date 字段 SSR 序列化, client 拿到 string, 业务代码预期 Date object 崩, hydration warning.",
+    aiReviewRisk: "为'直接'绕过 SerializeFrom, 跨边界类型不匹配.",
+    wrongAnswerFeedback: {
+      B: "直接绕过 SerializeFrom 引发跨边界类型不一致.",
+      C: "TS 不会报错, 类型是合法的.",
+      D: "有 hydration 风险.",
+    },
+  }),
+  q({
+    type: "ai_review",
+    title: "Q18 AI 显式重复定义 Session 类型",
+    prompt: "AI 改坏: AI 在 Layout 顶部定义 interface Session { user: string; email: string; ... } 与 toPublicSession 返回类型重复. 后果是?",
+    options: [
+      { id: "A", text: "类型与实现漂移: loader 加字段忘了改 interface, 编译过运行时崩" },
+      { id: "B", text: "更清晰" },
+      { id: "C", text: "TS 报错" },
+      { id: "D", text: "无影响" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "重复定义导致类型与实现漂移, 加字段忘改 interface 编译过运行时崩.",
+      detail: "正确做法是 typeof loader 自动推导, 任何字段加减自动同步. AI 重复定义虽然能跑, 但维护成本高, 加字段时容易漏改 interface.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "loader 加字段, interface 没改, 编译过, 运行时 data.newField undefined, 排查耗时.",
+    aiReviewRisk: "为'清晰'重复定义类型, 失去 typeof 自动同步.",
+    wrongAnswerFeedback: {
+      B: "清晰是表面, 维护成本才是关键.",
+      C: "TS 不会报错.",
+      D: "有维护风险.",
+    },
+  }),
+  q({
+    type: "ai_review",
+    title: "Q19 引用 §12.2-TS-4 SSE step 扩大 string",
+    prompt: tsSseEventWiden({
+      lessonSlug: "typed-loader",
+      courseSlug: "site-14-loader-read",
+      orderIndex: 18,
+    }).prompt,
+    options: tsSseEventWiden({
+      lessonSlug: "typed-loader",
+      courseSlug: "site-14-loader-read",
+      orderIndex: 18,
+    }).options,
+    correctAnswer: tsSseEventWiden({
+      lessonSlug: "typed-loader",
+      courseSlug: "site-14-loader-read",
+      orderIndex: 18,
+    }).correctAnswer as { choiceId: string },
+    explanation: tsSseEventWiden({
+      lessonSlug: "typed-loader",
+      courseSlug: "site-14-loader-read",
+      orderIndex: 18,
+    }).explanation,
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: "app/lib/nemesis-sse.server.ts",
+    layer: "ai-review",
+    serverClientBoundary: "shared",
+    touchedFiles: ["app/lib/nemesis-sse.server.ts"],
+    realWorldImpact: "loader 字段收窄退化 string, 拼写错误编译不报, data.themee 错误字段跳过, 用户看到 1 次错误渲染.",
+    typeSafetyRisk: "loader 字段 union 退化成 string, 失去穷尽性检查.",
+    wrongAnswerFeedback: tsSseEventWiden({
+      lessonSlug: "typed-loader",
+      courseSlug: "site-14-loader-read",
+      orderIndex: 18,
+    }).wrongAnswerFeedback ?? {},
+  }),
+  q({
+    type: "ai_review",
+    title: "Q20 AI 删 data?. 可选链",
+    prompt: "AI 改坏: AI 觉得 data?.theme '多此一举', 改成 const theme = data.theme. 后果是?",
+    options: [
+      { id: "A", text: "data 临时 undefined 时 (loader 正在跑) 抛 'cannot read property of undefined', 整页崩" },
+      { id: "B", text: "TS 报错" },
+      { id: "C", text: "更简洁" },
+      { id: "D", text: "无影响" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "data undefined 时崩溃, 失去 loader 异步时序保护.",
+      detail: "useLoaderData 在 navigation 切换时 data 可能是 undefined (loader 正在跑). data?.theme 兜底, data.theme 直接访问抛错. data.theme 失去 robustness.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "用户快速切路由时, data 临时 undefined, 整页崩, hydration error.",
+    aiReviewRisk: "为'简洁'删可选链, 失去 loader 异步时序保护.",
+    wrongAnswerFeedback: {
+      B: "TS 不会报错, undefined.theme 编译过 (严格 null 检查会报, 但 RR 类型可能不严).",
+      C: "删可选链不是简洁是脆弱.",
+      D: "有 hydration 风险.",
+    },
+  }),
+
+  // ─── 自由回答 (Q21-Q22) ────────────────────────────────────────────────
+  q({
+    type: "free_explain",
+    title: "Q21 解释 useLoaderData<typeof loader> 强类型契约",
+    prompt: "用自己的话解释 useLoaderData<typeof loader>() 的强类型契约怎么形成的, 为什么 Layout 与 App 能拿到同一份 data, SerializeFrom 解决了什么.",
+    options: [],
+    correctAnswer: {
+      text: "typeof loader 是 TypeScript 的 '取函数类型' 操作, RR 7 内部推导 loader 返回值, useLoaderData<typeof loader> 拿到的 data 强类型. Layout 与 App 都用 useLoaderData, RR 7 内部 React context 共享同一份 data 引用, 不会重新调 loader. SerializeFrom 处理跨 SSR/CSR 边界: Date 变 string, Map 变 object, Set 变 array, 客户端拿到 JSON 兼容类型, 避免 hydration mismatch. 整套机制保证字段名拼写错 TS 报, Date 跨边界被序列化, Layout 与 App 拿同一份 data.",
+    },
+    explanation: {
+      short: "typeof 推导 + context 共享 + SerializeFrom 跨边界, 三件套形成 RR 7 强类型契约.",
+      detail: "三件套职责正交: 类型推导 / 共享 / 跨边界. 任何一项被破坏都引发字段错误或 hydration mismatch.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "free-response",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "review_comment",
+    title: "Q22 一句 PR review",
+    prompt: "PR 把 useLoaderData<typeof loader>() 改成 useLoaderData<any>(), 写一条 review comment (1-2 句).",
+    options: [],
+    correctAnswer: {
+      comment: "useLoaderData<any>() 关掉 RR 7 强类型契约, data.theme 拼错编译过运行时崩, SerializeFrom 也失效, 跨 SSR/CSR 边界 Date 字段类型不一致. 必须保留 typeof loader 推导, 这是 RR 7 类型系统的最大价值, 不该用 any 退化为 '灵活'.",
+    },
+    explanation: {
+      short: "审查点: 强类型契约不可用 any 退化.",
+      detail: "好的 review 指出 (1) any 退化失去 typeof 推导 (2) 失去 SerializeFrom 跨边界 (3) 字段拼写错误隐藏 (4) 实际可观察的 bug.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "free-response",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+];

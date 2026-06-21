@@ -1,0 +1,43 @@
+{
+  "name": "code-coach",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "react-router build",
+    "dev": "react-router dev",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "react-router typegen && tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply code-coach-db --local",
+    "db:seed:local": "tsx scripts/seed-local.ts",
+    "db:seed:remote": "tsx scripts/seed-remote.ts",
+    "db:seed:sample:local": "tsx scripts/seed-sample-local.ts",
+    "db:rebuild-progress:local": "tsx scripts/rebuild-progress-local.ts",
+    "db:backfill-content:local": "tsx scripts/backfill-file-content.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "isbot": "^5.1.28",
+    "mermaid": "^11.15.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router": "^7.6.2",
+    "shiki": "^4.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.7.0",
+    "@cloudflare/workers-types": "^4.20250613.0",
+    "@react-router/cloudflare": "^7.6.2",
+    "@react-router/dev": "^7.6.2",
+    "@tailwindcss/vite": "^4.1.8",
+    "@types/node": "^25.9.3",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "tailwindcss": "^4.1.8",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.20.0"
+  }
+}

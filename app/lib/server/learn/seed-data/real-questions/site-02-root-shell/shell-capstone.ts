@@ -1,0 +1,528 @@
+/**
+ * Real questions for site-02-root-shell / shell-capstone.
+ *
+ * Anchor: remix/app/root.tsx 整体 (loader + Layout + App + ErrorBoundary).
+ * 学习目标: 改全站布局时, 动 root Layout 还是子路由的判断.
+ *
+ * 题目数: 22 (basic 6 / code-reading 5 / state-reasoning 4 / ai-review 5 /
+ *         free-response 2). 综合性, 跨 root.tsx 全文件, 引用前面 4 节课内容.
+ *
+ * 引用 recipe: remixRouteCssInRoot (§18.3-5) — capstone 涉及到全站 CSS 入口.
+ */
+
+import { q } from "../../types";
+import type { RealQ } from "../index";
+import { remixRouteCssInRoot } from "../recipes";
+
+const PRIMARY = "app/root.tsx";
+const TOUCHED = ["app/root.tsx", "app/components/error/NotFound404.tsx", "app/components/error/RouteErrorBoundary.tsx", "app/components/auth/LoginDialog.tsx"];
+
+export const shellCapstoneQuestions: RealQ[] = [
+  // ─── 基础识别 (Q1-Q6) ────────────────────────────────────────────────────
+  q({
+    type: "single_choice",
+    title: "Q1 root.tsx 三个核心 export",
+    prompt: "root.tsx 的三个核心 export 是?",
+    options: [
+      { id: "A", text: "loader, default App, ErrorBoundary" },
+      { id: "B", text: "loader, action, default App" },
+      { id: "C", text: "default App, ErrorBoundary, action" },
+      { id: "D", text: "loader, Layout, default App" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "loader + default App + ErrorBoundary 是 root.tsx 三大 export.",
+      detail: "Layout 是 RR 7 提供的可选 export, 项目里 Layout 与 default App 并存, 框架先渲染 Layout 包 default App.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q2 Layout 与 App 渲染顺序",
+    prompt: "Layout 包 default App 的渲染顺序是?",
+    options: [
+      { id: "A", text: "SSR: Layout(children = <App />) → App 渲染 → Layout 输出 <html>" },
+      { id: "B", text: "App 渲染 → Layout 包" },
+      { id: "C", text: "并行渲染" },
+      { id: "D", text: "只看 default export" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "Layout 是外壳, children = <App />, 先 App 后 Layout 拼 html.",
+      detail: "RR 7 把 Layout 当文档外壳, children 是 default 组件. SSR 时 children(=<App />) 先 renderToString, Layout 拿到 children 拼成 <html> 文档.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "multi_choice",
+    title: "Q3 root loader 涉及文件",
+    prompt: "root loader 内部调用涉及? (多选)",
+    options: [
+      { id: "A", text: "app/utils/theme.server.ts (getTheme)" },
+      { id: "B", text: "app/lib/auth.server.ts (requestHasAuthSessionCookie / getSessionCached)" },
+      { id: "C", text: "app/lib/theme.server.ts 的 toPublicSession" },
+      { id: "D", text: "app/generated/image-manifest.ts" },
+    ],
+    correctAnswer: { choiceIds: ["A", "B", "C"] },
+    explanation: {
+      short: "loader 串起 theme + session + 公开化.",
+      detail: "getTheme 读 theme cookie, requestHasAuthSessionCookie 守门, getSessionCached 真读 session, toPublicSession 过滤敏感字段.",
+    },
+    abilityTags: ["bridge.reactRouter.loader", "backend.session.cookie"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY, "app/utils/theme.server.ts", "app/lib/auth.server.ts"],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q4 改 root 的判断",
+    prompt: "需求: 在全站 header 加一个 '主题切换' 按钮. 应当改?",
+    options: [
+      { id: "A", text: "app/root.tsx Layout <head> 之后 <body> 之前插入, 或通过子组件 <Header />" },
+      { id: "B", text: "改 _index.tsx" },
+      { id: "C", text: "改 entry.server.tsx" },
+      { id: "D", text: "改 tailwind.css" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "全站 UI 在 root 或通用 Header 组件, 子路由不该做.",
+      detail: "全站可见的 UI 应当用共享组件 + root 渲染, 子路由做重复会出现一致性问题. 实际项目里 Header 是独立组件, root 引用.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY, "app/components/ui/Header.tsx"],
+  }),
+  q({
+    type: "fill_blank",
+    title: "Q5 防闪烁 inline script 读 cookie",
+    prompt: "防闪烁 inline script 通过 document.cookie.match(/_____/) 读 theme.",
+    options: [],
+    correctAnswer: { values: { key: "theme=([^;]+)" } },
+    blanks: [{ id: "key", placeholder: "正则", acceptedAnswers: ["theme=([^;]+)", "theme=([^;]+)"] }],
+    explanation: {
+      short: "正则 theme=([^;]+) 抓 theme cookie 值, ; 是 cookie 分隔.",
+      detail: "match 返回数组, [1] 是第一个捕获组, 没有匹配时是 undefined, 兜底 'light'.",
+    },
+    abilityTags: ["frontend.state.global"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "client",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q6 改 root loader 还是子 loader",
+    prompt: "需求: 给 chat 路由的 loader 增加 message 历史. 应当改?",
+    options: [
+      { id: "A", text: "app/routes/chat.tsx loader, 不动 root.tsx" },
+      { id: "B", text: "app/root.tsx loader" },
+      { id: "C", text: "app/entry.server.tsx" },
+      { id: "D", text: "app/tailwind.css" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "chat 专属数据走 chat loader, root 不该持有.",
+      detail: "root loader 只放全站共享数据 (theme / session). chat 历史是 chat 专属, 改 chat loader. 放 root 会让所有路由都跑 chat query, 浪费.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "basic",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY, "app/routes/chat.tsx"],
+  }),
+
+  // ─── 读代码 (Q7-Q11) ────────────────────────────────────────────────────
+  q({
+    type: "line_pick",
+    title: "Q7 关键行: data?.theme 兜底",
+    prompt: "data?.theme || 'light' 出现在 root.tsx Layout 哪一行?",
+    code: `1 export function Layout({ children }: { children: React.ReactNode }) {
+2   const data = useLoaderData<typeof loader>();
+3   const theme = data?.theme || "light";`,
+    options: [],
+    linePickLines: [
+      { id: "L1", lineNumber: 1, text: "export function Layout({ children }: { children: React.ReactNode }) {" },
+      { id: "L2", lineNumber: 2, text: "const data = useLoaderData<typeof loader>();" },
+      { id: "L3", lineNumber: 3, text: "const theme = data?.theme || 'light';" },
+    ],
+    correctAnswer: { lineId: "L3" },
+    explanation: {
+      short: "第 3 行 nullish 兜底, 防止 html className 缺值.",
+      detail: "data 可能是 undefined (loader 抛错 / 时序问题), theme 也可能是 null, 兜底 'light' 让 <html> 永远有 className.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q8 App 拿数据 vs Layout 拿数据",
+    prompt: "Layout 拿 data.theme, App 拿 data.session. 为什么 App 不在 Layout 里一起拿?",
+    options: [
+      { id: "A", text: "Layout 只需要 theme 用于 <html> className, App 才需要 session 用于登录 UI, 关注点分离" },
+      { id: "B", text: "性能优化" },
+      { id: "C", text: "TS 限制" },
+      { id: "D", text: "无意义" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "Layout 关注 <html> 文档壳, App 关注业务 UI, 关注点分离.",
+      detail: "如果 Layout 拿 session 又渲染 LoginDialog, LoginDialog 与 LoginSuccessVeil 等业务 UI 都会跑到 Layout, 文档壳与业务 UI 混在一起难维护. 分开让 Layout 保持简洁.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q9 toPublicSession 调用的位置",
+    prompt: "root loader 末尾 toPublicSession(session) 调用的目的是?",
+    options: [
+      { id: "A", text: "把 session 内部字段过滤成可公开的形状, 防止敏感字段 (如 userId) 暴露" },
+      { id: "B", text: "性能优化" },
+      { id: "C", text: "TS 限制" },
+      { id: "D", text: "无意义" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "toPublicSession 过滤敏感字段, 只暴露 public 部分.",
+      detail: "session 内部可能有 internalUserId / csrfToken / sessionSecret 等敏感字段, 全部走 json() 暴露会泄露. toPublicSession 是 type-level 的过滤.",
+    },
+    abilityTags: ["backend.session.cookie"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY, "app/lib/auth.server.ts"],
+  }),
+  q({
+    type: "multi_choice",
+    title: "Q10 错误页分流",
+    prompt: "ErrorBoundary 分流到 NotFound404 / RouteErrorBoundary 各自的场景? (多选)",
+    options: [
+      { id: "A", text: "NotFound404: error.status === 404 (用户走错路)" },
+      { id: "B", text: "RouteErrorBoundary: 其他 ErrorResponse (401/403/500) 或普通 Error" },
+      { id: "C", text: "两者画风不同 (龙 vs 鱼) + 文字不同" },
+      { id: "D", text: "两者完全一样" },
+    ],
+    correctAnswer: { choiceIds: ["A", "B", "C"] },
+    explanation: {
+      short: "404 走 NotFound404, 其他走 RouteErrorBoundary, 视觉与文案不同.",
+      detail: "项目有意区分用户错与系统错, 引导用户不同行为 (回首页 vs 重试).",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "shared",
+    touchedFiles: TOUCHED,
+  }),
+  q({
+    type: "single_choice",
+    title: "Q11 五个 Suspense 包裹的组件",
+    prompt: "root.tsx + App 用了 Suspense 包裹哪些组件? (回想 App L131-152)",
+    options: [
+      { id: "A", text: "LoginDialog 与 GoogleOneTap (都在 .client 动态 import 链路上)" },
+      { id: "B", text: "Outlet" },
+      { id: "C", text: "Header" },
+      { id: "D", text: "无" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "Suspense 包裹 LoginDialog 与 GoogleOneTap, 它们是 .client 动态 import.",
+      detail: "Suspense 处理 async import 的等待期, fallback={null} 让 import 透明. 业务组件 (Outlet / Header) 不需要 Suspense, 它们是 sync import.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "code-reading",
+    serverClientBoundary: "client",
+    touchedFiles: TOUCHED,
+  }),
+
+  // ─── 状态推演 (Q12-Q15) ─────────────────────────────────────────────────
+  q({
+    type: "branch_trace",
+    title: "Q12 SSR 完整流水线",
+    prompt: "用户访问 /, SSR 经历什么?",
+    options: [
+      { id: "loader", text: "root loader 跑 (theme / session)" },
+      { id: "app", text: "App 组件渲染, useLoaderData 拿数据" },
+      { id: "layout", text: "Layout 拿 data.theme 拼 <html> 文档, 插入防闪烁 inline script" },
+      { id: "stream", text: "renderToReadableStream 流式返回浏览器" },
+    ],
+    correctAnswer: { pathIds: ["loader", "app", "layout", "stream"] },
+    explanation: {
+      short: "loader → App → Layout 拼壳 → 流式返回.",
+      detail: "SSR 流程: RR 7 调用 loader, 拿到 data, children(=<App />) 渲染, Layout 拿到 children 拼 <html>, 流式返回.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "branch_trace",
+    title: "Q13 hydrate 时序",
+    prompt: "浏览器拿到 HTML, hydrate 流程?",
+    options: [
+      { id: "script", text: "防闪烁 inline script 立即执行, 给 <html> 加 theme class" },
+      { id: "bundle", text: "<Scripts /> 拉客户端 bundle, 启动 React" },
+      { id: "hydrate", text: "React hydrate, 复用 SSR DOM, useLoaderData 拿到 data" },
+      { id: "interactive", text: "页面变可交互, Outlet 渲染子路由" },
+    ],
+    correctAnswer: { pathIds: ["script", "bundle", "hydrate", "interactive"] },
+    explanation: {
+      short: "防闪烁 → 拉 bundle → hydrate → 可交互.",
+      detail: "浏览器解析 HTML 时 inline script 先跑 (设 className), 然后 Scripts 拉 bundle, React hydrate 复用 DOM, 接管事件.",
+    },
+    abilityTags: ["frontend.state.global"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "client",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q14 切路由时 root 不重跑",
+    prompt: "用户从 / 切到 /chat, root loader 会重跑吗?",
+    options: [
+      { id: "A", text: "不重跑, RR 7 自动 revalidate, 但 root 在父级, 父 loader 在 navigation 之间不重跑" },
+      { id: "B", text: "每次重跑" },
+      { id: "C", text: "从不重跑" },
+      { id: "D", text: "随机" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "父 loader 不随子路由 navigation 重跑, 除非显式 revalidate.",
+      detail: "RR 7 的 revalidate 默认是 '按需' 模式, 父 loader 在子路由 navigation 之间不重跑, 数据 stale 时显式触发 revalidate().",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY],
+  }),
+  q({
+    type: "single_choice",
+    title: "Q15 改全站布局的最小范围",
+    prompt: "需求: 给所有页面加 footer 链接. 最小改法?",
+    options: [
+      { id: "A", text: "在 root.tsx Layout <body> 内 children 后追加 <Footer />, 单一文件改动" },
+      { id: "B", text: "每个子路由都加" },
+      { id: "C", text: "改 entry.server.tsx" },
+      { id: "D", text: "改 tailwind.css" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "全站 footer 加在 Layout <body> 内 children 之后, 一处生效.",
+      detail: "Layout 是文档壳, <body> 渲染 {children} 是子路由, 之后再加 <Footer /> 即全站可见. 子路由不需改.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "state-reasoning",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+  }),
+
+  // ─── AI 审查 (Q16-Q20) ──────────────────────────────────────────────────
+  q({
+    type: "ai_review",
+    title: "Q16 AI 把登录 UI 移到 root loader",
+    prompt: "AI 改坏: AI 在 root loader 末尾 await checkLoginStatus() 并把它放进 data 让 Layout 显示登录状态条. 后果是?",
+    options: [
+      { id: "A", text: "所有路由都跑 checkLoginStatus, 浪费 D1 / 缓存命中, 把全站共享数据与页面 UI 混在 loader" },
+      { id: "B", text: "loader 更快" },
+      { id: "C", text: "TS 报错" },
+      { id: "D", text: "无影响" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "root loader 只放全站共享数据, 业务 UI 不该在这里.",
+      detail: "checkLoginStatus 本身没问题, 但放在 root loader 会让每个路由都跑, 浪费资源. UI 状态应在 App 组件, 不是 loader.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "全站 navigation 都跑 checkLoginStatus, D1 QPS 翻倍, 加载变慢; UI 状态与数据流混在一起难维护.",
+    aiReviewRisk: "把'统一在 loader'当成最佳实践, 忽略 root 与子 loader 的关注点分离.",
+    wrongAnswerFeedback: {
+      B: "反而更慢, 因为所有路由都跑.",
+      C: "TS 不会报错.",
+      D: "严重影响性能.",
+    },
+  }),
+  q({
+    type: "ai_review",
+    title: "Q17 AI 把 Outlet context 类型放宽",
+    prompt: "AI 改坏: AI 把 <Outlet context={{ session, openLoginDialog, loginDialogOpen }}> 的 context 类型改成 any. 后果是?",
+    options: [
+      { id: "A", text: "子路由 useOutletContext 拿到 any, 编译期失去 session 形状保护, 字段拼写错误不报" },
+      { id: "B", text: "TS 报错" },
+      { id: "C", text: "无影响" },
+      { id: "D", text: "loader 失败" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "any 失去 Outlet context 的强类型契约, 字段拼写错误编译过.",
+      detail: "Outlet context 的价值就是强类型, any 等于退化成'任何字段都能访问', session.user 拼成 session.userer 也通过, 运行期崩.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "子路由字段拼错, 编译过, 运行时拿 undefined, 排查时间以小时计.",
+    aiReviewRisk: "把 any 当成'灵活', 破坏 Outlet context 的强类型契约.",
+    wrongAnswerFeedback: {
+      B: "TS 不会报错, 这正是问题.",
+      C: "有运行时影响.",
+      D: "loader 与 context 类型无关.",
+    },
+  }),
+  q({
+    type: "ai_review",
+    title: "Q18 AI 把 ErrorBoundary 的 status 判断改成 string",
+    prompt: "AI 改坏: AI 把 error.status === 404 改成 error.status as string === '404'. 后果是?",
+    options: [
+      { id: "A", text: "TS 编译失败 / 行为没变, 但类型撒谎, 后期 status 改成 number 时漏报" },
+      { id: "B", text: "404 不会渲染" },
+      { id: "C", text: "TS 报错" },
+      { id: "D", text: "无影响" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "as string 是 type cast, 编译过但类型撒谎, 维护期漏报.",
+      detail: "ErrorResponse.status 是 number, as string 后 === '404' 永远 false (number 404 !== string '404'), 404 不会渲染, 走 RouteErrorBoundary. AI 的 as 经常破坏类型契约.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "shared",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "404 用户看到 RouteErrorBoundary 而不是 NotFound404, 体验错位.",
+    aiReviewRisk: "把 as 当成'类型转换', 实际上 as 是 type cast, 不做运行时转换.",
+    wrongAnswerFeedback: {
+      B: "404 不会渲染, 但原因是 === '404' 永远 false.",
+      C: "TS 可能不报错 (status 是 number, as string 在 strict 模式下也不报错), 运行时炸.",
+      D: "有运行时影响.",
+    },
+  }),
+  q({
+    type: "ai_review",
+    title: "Q19 引用 §18.3-5 route CSS 全塞 root",
+    prompt: remixRouteCssInRoot({
+      lessonSlug: "shell-capstone",
+      courseSlug: "site-02-root-shell",
+      orderIndex: 18,
+    }).prompt,
+    options: remixRouteCssInRoot({
+      lessonSlug: "shell-capstone",
+      courseSlug: "site-02-root-shell",
+      orderIndex: 18,
+    }).options,
+    correctAnswer: remixRouteCssInRoot({
+      lessonSlug: "shell-capstone",
+      courseSlug: "site-02-root-shell",
+      orderIndex: 18,
+    }).correctAnswer as { choiceId: string },
+    explanation: remixRouteCssInRoot({
+      lessonSlug: "shell-capstone",
+      courseSlug: "site-02-root-shell",
+      orderIndex: 18,
+    }).explanation,
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY, "app/styles/index-route.css", "app/styles/game.css"],
+    realWorldImpact: "首屏下载 800KB CSS, 移动端 LCP 退到 4s+; 切到 game 路由时, gallery 的 .grid 类污染 game 布局.",
+    aiReviewRisk: "为'省事'破坏 RR 的按路由资源分包, 跨页面样式互相影响.",
+    wrongAnswerFeedback: remixRouteCssInRoot({
+      lessonSlug: "shell-capstone",
+      courseSlug: "site-02-root-shell",
+      orderIndex: 18,
+    }).wrongAnswerFeedback ?? {},
+  }),
+  q({
+    type: "ai_review",
+    title: "Q20 AI 删 ScrollRestoration",
+    prompt: "AI 改坏: AI 把 <ScrollRestoration /> 删除, 理由是 '用户不需要恢复滚动'. 后果是?",
+    options: [
+      { id: "A", text: "用户切路由后滚动位置不恢复, 跳到顶部, 体验退步" },
+      { id: "B", text: "TS 报错" },
+      { id: "C", text: "loader 失败" },
+      { id: "D", text: "无影响" },
+    ],
+    correctAnswer: { choiceId: "A" },
+    explanation: {
+      short: "ScrollRestoration 是 RR 7 内置体验组件, 删了滚动位置丢失.",
+      detail: "用户从 gallery 滚到第 5 张图, 点详情再返回, 期望回到第 5 张, 删了 ScrollRestoration 后回到顶部, 体验退步.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "ai-review",
+    serverClientBoundary: "client",
+    touchedFiles: [PRIMARY],
+    realWorldImpact: "用户长列表 / 内容流体验崩溃, 每次切路由都跳顶部, 需要重新滚.",
+    aiReviewRisk: "把内置体验组件当成'可省略'.",
+    wrongAnswerFeedback: {
+      B: "TS 不会报错.",
+      C: "loader 与 ScrollRestoration 无关.",
+      D: "严重影响 UX.",
+    },
+  }),
+
+  // ─── 自由回答 (Q21-Q22) ────────────────────────────────────────────────
+  q({
+    type: "free_explain",
+    title: "Q21 解释 root.tsx 三层架构",
+    prompt: "用自己的话解释 root.tsx 的 loader / Layout / App / ErrorBoundary 四件套在 SSR / CSR / 错误时分别承担什么职责.",
+    options: [],
+    correctAnswer: {
+      text: "loader 负责 SSR 阶段准备全站共享数据 (theme / session), 是数据入口. Layout 负责 SSR 拼 <html> 文档壳 + 防闪烁 inline script, 是文档结构. App 负责渲染业务 UI (Outlet / 登录提示 / 成功动画), 是业务入口. ErrorBoundary 负责错误兜底, 404 走 NotFound404, 其他走 RouteErrorBoundary. SSR 流水线: loader → children(=<App />) → Layout 拼壳 → 流式返回. 错误时: RR 7 用 ErrorBoundary 替代子树.",
+    },
+    explanation: {
+      short: "loader 数据, Layout 壳, App 业务, ErrorBoundary 兜底.",
+      detail: "四件套关注点分离, 任何一项改动只影响自己范围, 改 Layout 不动 loader, 改 App 不动 ErrorBoundary.",
+    },
+    abilityTags: ["bridge.reactRouter.loader"],
+    sourceFilePath: PRIMARY,
+    layer: "free-response",
+    serverClientBoundary: "shared",
+    touchedFiles: TOUCHED,
+  }),
+  q({
+    type: "review_comment",
+    title: "Q22 一句 PR review",
+    prompt: "PR 把 root loader 改成读取 chat 历史, 写一条 review comment (1-2 句).",
+    options: [],
+    correctAnswer: {
+      comment: "root loader 是全站共享数据入口, chat 历史是 chat 专属. 把 chat 读取放进 root 会让所有路由都跑这段 query, 浪费 D1 QPS 与首屏时间, 也会让 navigation 之间的 loader 缓存命中错乱. 请把 chat 历史移到 app/routes/chat.tsx 的 loader, root 只保留 theme / session.",
+    },
+    explanation: {
+      short: "审查点: root loader 的关注点边界.",
+      detail: "好的 review 指出 (1) root 与子 loader 的职责分离 (2) 性能影响 (3) 缓存命中错乱 (4) 给出明确改法.",
+    },
+    abilityTags: ["ai.review.architecture"],
+    sourceFilePath: PRIMARY,
+    layer: "free-response",
+    serverClientBoundary: "server",
+    touchedFiles: [PRIMARY, "app/routes/chat.tsx"],
+  }),
+];
