@@ -15,20 +15,30 @@
 import { useEffect, useState } from "react";
 import { useFetcher } from "react-router";
 import type { Question, UserAnswer } from "~/lib/learn/types";
+import type { AiErrorCode } from "~/lib/learn/aiErrorCode";
+import { AiErrorBox } from "~/components/learn/ui/AiErrorBox";
 import { CollapsibleSection } from "~/components/learn/ui/CollapsibleSection";
 import { AiMarkdown } from "~/components/learn/ui/AiMarkdown";
 import { MermaidDiagram } from "~/components/learn/ui/MermaidDiagram";
+import {
+  AiLoadingPhases,
+  AI_DIAGRAM_PHASES,
+  AI_EXPLANATION_PHASES,
+  AI_LESSON_COMBO_PHASES,
+} from "~/components/learn/ui/AiLoadingPhases";
 
 type ExplanationActionData =
   | {
       ok: true;
       feature: "explanation";
-      text: string;
+      // 路由返回的字段是 markdown (与 AnnotatedSourceCard 一致), 不是 text。
+      markdown: string;
+      fromCache?: boolean;
     }
   | {
       ok: false;
       error: string;
-      code?: "rate_limited" | "not_configured" | "ai_failed" | "forbidden";
+      code?: AiErrorCode;
     };
 
 type DiagramActionData =
@@ -40,7 +50,7 @@ type DiagramActionData =
   | {
       ok: false;
       error: string;
-      code?: "rate_limited" | "not_configured" | "ai_failed" | "forbidden";
+      code?: AiErrorCode;
     };
 
 type TabKey = "explanation" | "diagram";
@@ -123,7 +133,7 @@ export function AiHintPanel({
   useEffect(() => {
     if (explanationFetcher.state !== "idle") return;
     const d = explanationFetcher.data;
-    if (d?.ok) setExplanationText(d.text);
+    if (d?.ok) setExplanationText(d.markdown);
   }, [explanationFetcher.state, explanationFetcher.data]);
 
   // diagramFetcher 完成
@@ -165,10 +175,35 @@ export function AiHintPanel({
     );
   }
 
+  function fetchExplanation() {
+    explanationFetcher.submit(
+      {
+        intent: "ai_explanation",
+        questionId: question.id,
+        questionType: question.type,
+      },
+      { method: "post" },
+    );
+  }
+
   function regenerateExplanation() {
     explanationFetcher.submit(
       {
         intent: "ai_explanation",
+        questionId: question.id,
+        questionType: question.type,
+        // force=1: 跳过 KV 缓存重新让 AI 生成一份。仅"重新生成"按钮触发,
+        // 首次生成 / 错误重试都不带 (让命中缓存就直接走缓存)。
+        force: "1",
+      },
+      { method: "post" },
+    );
+  }
+
+  function fetchDiagram() {
+    diagramFetcher.submit(
+      {
+        intent: "ai_question_diagram",
         questionId: question.id,
         questionType: question.type,
       },
@@ -204,17 +239,21 @@ export function AiHintPanel({
             className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[var(--color-brand-500)] to-[var(--color-brand-700)] px-4 py-2 text-sm font-semibold text-white shadow-md transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sparkle}
-            {anyLoading
-              ? "AI 正在写讲解 + 画思维导图…"
-              : "AI 分析这道错题"}
+            {anyLoading ? "AI 正在生成…" : "AI 分析这道错题"}
           </button>
+          {anyLoading && (
+            <div className="mt-2">
+              <AiLoadingPhases phases={AI_LESSON_COMBO_PHASES} />
+            </div>
+          )}
           <p className="mt-2 text-xs text-[var(--fg-soft)]">
             一键并发生成「文字讲解」和「思维导图」两份内容，结果分两个 tab 展示。
           </p>
           {(explanationError || diagramError) && (
-            <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
-              {explanationError?.error ?? diagramError?.error}
-            </p>
+            <AiErrorBox
+              error={(explanationError ?? diagramError)!}
+              onRetry={generateBoth}
+            />
           )}
         </div>
       ) : (
@@ -248,14 +287,16 @@ export function AiHintPanel({
                 text={explanationText}
                 loading={explanationLoading}
                 error={explanationError}
-                onGenerate={regenerateExplanation}
+                onFetch={fetchExplanation}
+                onRegenerate={regenerateExplanation}
               />
             ) : (
               <DiagramTabBody
                 source={diagramSource}
                 loading={diagramLoading}
                 error={diagramError}
-                onGenerate={regenerateDiagram}
+                onFetch={fetchDiagram}
+                onRegenerate={regenerateDiagram}
               />
             )}
           </div>
@@ -314,12 +355,16 @@ function ExplanationTabBody({
   text,
   loading,
   error,
-  onGenerate,
+  onFetch,
+  onRegenerate,
 }: {
   text: string | null;
   loading: boolean;
-  error: { error: string } | null;
-  onGenerate: () => void;
+  error: { error: string; code?: AiErrorCode } | null;
+  /** 首次/错误重试: 不带 force, 命中 KV 缓存就直接拿。 */
+  onFetch: () => void;
+  /** "重新生成"按钮: 带 force=1, 跳过 KV 缓存让 AI 重出一份。 */
+  onRegenerate: () => void;
 }) {
   if (text) {
     return (
@@ -331,7 +376,7 @@ function ExplanationTabBody({
           </p>
           <button
             type="button"
-            onClick={onGenerate}
+            onClick={onRegenerate}
             disabled={loading}
             className="text-xs font-medium text-[var(--brand-fg)] hover:underline disabled:opacity-50"
           >
@@ -339,17 +384,15 @@ function ExplanationTabBody({
           </button>
         </div>
         <AiMarkdown text={text} />
-        {error && (
-          <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
-            {error.error}
-          </p>
-        )}
+        {error && <AiErrorBox error={error} onRetry={onFetch} />}
       </div>
     );
   }
   if (loading) {
     return (
-      <p className="text-sm text-[var(--fg-soft)]">AI 正在写文字讲解…</p>
+      <div className="rounded-lg border border-[var(--border-soft-brand)] bg-[var(--surface-raised)] p-3">
+        <AiLoadingPhases phases={AI_EXPLANATION_PHASES} />
+      </div>
     );
   }
   return (
@@ -357,17 +400,13 @@ function ExplanationTabBody({
       <p className="text-[var(--fg-soft)]">尚未生成文字讲解。</p>
       <button
         type="button"
-        onClick={onGenerate}
+        onClick={onFetch}
         className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[var(--color-brand-500)] to-[var(--color-brand-700)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5"
       >
         {sparkle}
         生成文字讲解
       </button>
-      {error && (
-        <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger-fg)]">
-          {error.error}
-        </p>
-      )}
+      {error && <AiErrorBox error={error} onRetry={onFetch} small />}
     </div>
   );
 }
@@ -376,12 +415,16 @@ function DiagramTabBody({
   source,
   loading,
   error,
-  onGenerate,
+  onFetch,
+  onRegenerate,
 }: {
   source: string | null;
   loading: boolean;
-  error: { error: string } | null;
-  onGenerate: () => void;
+  error: { error: string; code?: AiErrorCode } | null;
+  /** 首次/错误重试: 当前没接缓存, 与 onRegenerate 等价。保持两个接口为对称。 */
+  onFetch: () => void;
+  /** "重新生成"按钮: 重跑 AI (diagram 当前未缓存, 与 onFetch 等价)。 */
+  onRegenerate: () => void;
 }) {
   if (source) {
     return (
@@ -393,7 +436,7 @@ function DiagramTabBody({
           </p>
           <button
             type="button"
-            onClick={onGenerate}
+            onClick={onRegenerate}
             disabled={loading}
             className="text-xs font-medium text-[var(--brand-fg)] hover:underline disabled:opacity-50"
           >
@@ -401,17 +444,15 @@ function DiagramTabBody({
           </button>
         </div>
         <MermaidDiagram source={source} />
-        {error && (
-          <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
-            {error.error}
-          </p>
-        )}
+        {error && <AiErrorBox error={error} onRetry={onFetch} />}
       </div>
     );
   }
   if (loading) {
     return (
-      <p className="text-sm text-[var(--fg-soft)]">AI 正在画思维导图…</p>
+      <div className="rounded-lg border border-[var(--border-soft-brand)] bg-[var(--surface-raised)] p-3">
+        <AiLoadingPhases phases={AI_DIAGRAM_PHASES} />
+      </div>
     );
   }
   return (
@@ -419,17 +460,13 @@ function DiagramTabBody({
       <p className="text-[var(--fg-soft)]">尚未生成思维导图。</p>
       <button
         type="button"
-        onClick={onGenerate}
+        onClick={onFetch}
         className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[var(--color-brand-500)] to-[var(--color-brand-700)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5"
       >
         {brainIcon}
         生成思维导图
       </button>
-      {error && (
-        <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger-fg)]">
-          {error.error}
-        </p>
-      )}
+      {error && <AiErrorBox error={error} onRetry={onFetch} small />}
     </div>
   );
 }

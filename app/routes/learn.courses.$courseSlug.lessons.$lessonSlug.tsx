@@ -28,6 +28,7 @@ import { ensureLearnUser, mergeHeaders } from "~/lib/server/learn/user.server";
 import {
   AI_TEACHING_TTL_SECONDS,
   LEARN_CACHE_KEYS,
+  sha1Hex8,
 } from "~/lib/server/learn/cache-keys";
 import type { Route } from "./+types/learn.courses.$courseSlug.lessons.$lessonSlug";
 
@@ -158,6 +159,10 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
   const { DB: db, LEARN_CACHE: cache } = context.cloudflare.env;
   const env = context.cloudflare.env;
+  // executionCtx 用来把 AI 调用后的 D1 日志写入 (ai_explanation_logs +
+  // ai_usage_logs) 排到响应外, 让用户不必白等几百 ms。aiLearn.server.ts
+  // 的每个 generate* 都接一个可选的 ctx, 内部走 ctx.waitUntil。
+  const ctx = context.cloudflare.ctx;
   const { userId, headers: cookieHeaders } = ensureLearnUser(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "");
@@ -210,7 +215,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         primaryFilePath: lesson.sourceFilePath ?? "remix/(未指定)",
         primaryFileCode: pickPrimaryFileCode(lesson.teachingBlocks),
         questionCodeSamples: samples,
-      });
+      }, ctx);
 
       // 写入 KV cache, 全局共享 7 天 (cache.put 失败不阻塞响应)
       if (cache) {
@@ -274,7 +279,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         primaryFilePath: lesson.sourceFilePath ?? "remix/(未指定)",
         primaryFileCode: pickPrimaryFileCode(lesson.teachingBlocks),
         questionCodeSamples: samples,
-      });
+      }, ctx);
 
       if (cache) {
         await cache
@@ -341,7 +346,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         lessonTitle: lesson.title,
         lessonFocus: lesson.learningGoal ?? lesson.description ?? "",
         abilityTags: lesson.lessonMeta?.abilityTags ?? [],
-      });
+      }, ctx);
       if (cache && result.text) {
         await cache
           .put(cacheKey, result.text, {
@@ -478,7 +483,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           previousHintCount: Number.isFinite(previousHintCount)
             ? previousHintCount
             : 0,
-        });
+        }, ctx);
         return data(
           {
             ok: true as const,
@@ -520,6 +525,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           env,
           questionId,
           explanationInput,
+          ctx,
         );
         return data(
           {
@@ -531,13 +537,54 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         );
       }
 
-      const result = await generateExplanation(db, env, questionId, explanationInput);
+      // H: 题级 AI 讲解 KV 缓存 — 按 (questionId, hash(userAnswer + sourcePath)) 全局共享, 7 天 TTL。
+      // 不写入用户身份: 同一道题、同一份答案、同一文件路径, 对所有用户讲解都一样。
+      // 用户点"重新生成" → fetcher submit force=1, 直接绕过本缓存并把新结果重写回 KV。
+      const force = formData.get("force") === "1";
+      const answerHash = await sha1Hex8(
+        JSON.stringify({
+          a: userAnswerFromAttempt ?? null,
+          p: explanationInput.sourceFilePath ?? "",
+        }),
+      );
+      const explanationCacheKey = LEARN_CACHE_KEYS.aiExplanation(
+        questionId,
+        answerHash,
+      );
+
+      if (!force && cache) {
+        const cached = await cache.get(explanationCacheKey);
+        if (cached) {
+          return data(
+            {
+              ok: true as const,
+              feature: "explanation" as const,
+              markdown: cached,
+              fromCache: true,
+            },
+            responseHeaders,
+          );
+        }
+      }
+
+      const result = await generateExplanation(db, env, questionId, explanationInput, ctx);
+
+      if (cache) {
+        await cache
+          .put(explanationCacheKey, result.text, {
+            expirationTtl: AI_TEACHING_TTL_SECONDS,
+          })
+          .catch((err) =>
+            console.warn("[ai_explanation] cache put failed", err),
+          );
+      }
 
       return data(
         {
           ok: true as const,
           feature: "explanation" as const,
           markdown: result.text,
+          fromCache: false,
         },
         responseHeaders,
       );

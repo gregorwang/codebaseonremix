@@ -31,7 +31,7 @@ type GenerateDraftActionData =
   | {
       ok: false;
       error: string;
-      code?: "rate_limited" | "not_configured" | "ai_failed" | "forbidden";
+      code?: import("~/lib/learn/aiErrorCode").AiErrorCode;
     };
 
 type GenerateDraftPanelProps = {

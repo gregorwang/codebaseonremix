@@ -25,6 +25,30 @@ export const LEARN_CACHE_KEYS = {
   /** 文件级"读前导读"(行锚定 JSON, 中性不剧透): 按源码文件路径缓存, 全局共享。 */
   codeOrientation: (filePath: string) =>
     learnCacheKey("orientation", filePath),
+  /**
+   * 题级 AI 讲解: 按 (questionId, answerHash) 缓存, 与 lessonAiTeaching 同 TTL (7 天)。
+   * answerHash 由 routes 里 sha1Hex8(JSON.stringify(userAnswer)+sourcePath) 计算,
+   * 不含用户身份 — 相同答案的多个用户共享同一份讲解。
+   * 用户在 UI 上点"重新生成"时, 前端会传 force=1 跳过本缓存并重新写入。
+   */
+  aiExplanation: (questionId: string, answerHash: string) =>
+    learnCacheKey("question", questionId, "ai-explanation", answerHash),
 } as const;
 
 export const AI_TEACHING_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+/**
+ * 给一段字符串算 SHA-1 hex, 取前 8 位。
+ * 用于 ai_explanation 缓存键的 answerHash 部分 — 8 位 (~32 bit) 对单个 questionId
+ * 下不同答案的去重已经足够, 同时把 key 长度压住。
+ */
+export async function sha1Hex8(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-1", data);
+  const bytes = new Uint8Array(buf);
+  let hex = "";
+  for (let i = 0; i < 4; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  return hex;
+}

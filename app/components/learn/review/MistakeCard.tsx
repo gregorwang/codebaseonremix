@@ -3,6 +3,10 @@ import { ABILITY_TAG_LABELS } from "~/lib/learn/abilityTags";
 import type { MistakeReviewItem } from "~/lib/server/learn/mistakes.server";
 import { Badge } from "~/components/learn/ui/Badge";
 import { AiMarkdown } from "~/components/learn/ui/AiMarkdown";
+import {
+  AiLoadingPhases,
+  AI_EXPLANATION_PHASES,
+} from "~/components/learn/ui/AiLoadingPhases";
 
 type MistakeCardProps = {
   mistake: MistakeReviewItem;
@@ -140,6 +144,12 @@ export function MistakeCard({
           </p>
         )}
 
+        {isGeneratingSummary && !mistake.aiSummary && (
+          <div className="mt-2 rounded-lg border border-[var(--border-soft-brand)] bg-[var(--brand-soft)]/40 p-2.5">
+            <AiLoadingPhases phases={AI_EXPLANATION_PHASES} />
+          </div>
+        )}
+
         <div className="mt-4 flex flex-wrap gap-2">
           <Link
             to={practiceUrl}
@@ -155,7 +165,7 @@ export function MistakeCard({
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-soft-brand)] bg-[var(--surface-raised)] px-4 py-2 text-sm font-medium text-[var(--brand-fg)] transition-colors hover:bg-[var(--brand-soft)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {sparkle}
-              {isGeneratingSummary ? "生成中…" : "生成 AI 总结"}
+              {isGeneratingSummary ? "AI 生成中…" : "生成 AI 总结"}
             </button>
           )}
           {!mistake.isResolved && (

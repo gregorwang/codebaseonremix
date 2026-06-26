@@ -120,14 +120,19 @@ export function AiMarkdown({ text, className, copyable = true }: AiMarkdownProps
     <div className={className ?? "space-y-3 text-sm leading-[1.7]"}>
       {blocks.map((block, i) => {
         if (block.kind === "heading") {
-          // h1/h2/h3 在 AI 讲解里都是节标题, 视觉一致即可。
+          // 渲染成真实 heading 标签, 屏幕阅读器用户才能用 H 键按节跳读。
+          // 整篇 AI 区块从 <h2> 起步以避开页面级 <h1>: # → h2, ## → h3, ### → h4。
+          // 视觉样式统一(都是小节标题), 但语义层级保留。
+          const Tag = (
+            block.level === 1 ? "h2" : block.level === 2 ? "h3" : "h4"
+          ) as "h2" | "h3" | "h4";
           return (
-            <p
+            <Tag
               key={i}
               className="mt-4 text-sm font-semibold tracking-tight text-[var(--fg-primary)]"
             >
               {renderInline(block.text)}
-            </p>
+            </Tag>
           );
         }
         if (block.kind === "list") {

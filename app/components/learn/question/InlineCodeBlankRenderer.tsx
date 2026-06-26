@@ -37,11 +37,13 @@ export function InlineCodeBlankRenderer({
     e: React.KeyboardEvent<HTMLInputElement>,
     blankIndex: number,
   ) {
-    if (e.key === "Enter" || e.key === "Tab") {
-      if (!e.shiftKey && blankIndex < blankIds.length - 1) {
-        e.preventDefault();
-        focusBlank(blankIndex + 1);
-      }
+    // Only intercept Enter — Tab MUST stay as native tab order so users can
+    // escape the blank chain (e.g. tab on to the submit button). We previously
+    // hijacked Tab here, which created a keyboard trap for assistive-tech
+    // users and was flagged in the WCAG audit.
+    if (e.key === "Enter" && !e.shiftKey && blankIndex < blankIds.length - 1) {
+      e.preventDefault();
+      focusBlank(blankIndex + 1);
     }
   }
 

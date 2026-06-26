@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { inferCodeLanguage } from "~/lib/learn/inferCodeLanguage";
 import { getLearnTheme, subscribeLearnTheme } from "~/lib/learn/theme.client";
 
@@ -32,6 +32,7 @@ export function CodeBlock({
   const [expanded, setExpanded] = useState(!collapsible);
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const bodyId = `code-block-body-${useId()}`;
 
   const lang = language ?? inferCodeLanguage(filePath, code);
   const lines = useMemo(() => code.split("\n"), [code]);
@@ -137,7 +138,10 @@ export function CodeBlock({
         </div>
       </div>
 
-      <div className="learn-code-panel-body flex overflow-x-auto bg-[var(--code-bg)]">
+      <div
+        id={bodyId}
+        className="learn-code-panel-body flex overflow-x-auto bg-[var(--code-bg)]"
+      >
         <div className="select-none border-r border-[var(--code-border)] bg-[var(--surface-sunken)] px-2 py-3 text-right font-mono text-xs leading-6 text-[var(--code-gutter-fg)]">
           {visibleLines.map((_, index) => {
             const lineNumber = index + 1;
@@ -181,6 +185,8 @@ export function CodeBlock({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            aria-controls={bodyId}
             className="text-xs font-medium text-[var(--brand-fg)] hover:text-[var(--brand-fg-strong)]"
           >
             {expanded ? "收起代码" : `展开全部（${lines.length} 行）`}

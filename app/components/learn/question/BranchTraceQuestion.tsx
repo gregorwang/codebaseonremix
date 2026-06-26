@@ -57,7 +57,11 @@ export function BranchTraceQuestion({
       <p className="mt-3 text-xs text-[var(--fg-soft)]">
         按执行顺序依次点击步骤；用撤销修正，不要跳步。
       </p>
-      <div className="mt-3 space-y-2">
+      <div
+        className="mt-3 space-y-2"
+        role="group"
+        aria-label="按执行顺序排列的步骤选项"
+      >
         {question.options?.map((option) => {
           const order = pathIds.indexOf(option.id);
           const selected = order >= 0;
@@ -70,6 +74,14 @@ export function BranchTraceQuestion({
               type="button"
               disabled={disabled || (!selected && !isNext)}
               onClick={() => select(option.id)}
+              aria-pressed={selected}
+              aria-label={
+                selected
+                  ? `第 ${order + 1} 步：${option.text}`
+                  : isNext
+                    ? `下一步可选：${option.text}`
+                    : `已锁定：${option.text}`
+              }
               className={`flex w-full items-center gap-3 rounded-xl border bg-[var(--surface-raised)] px-4 py-3 text-left transition-all ${
                 selected
                   ? "border-[var(--color-brand-500)] bg-[var(--brand-soft)] ring-1 ring-[var(--color-brand-500)]/40"

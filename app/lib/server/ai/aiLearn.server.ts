@@ -76,25 +76,69 @@ export type GenerateQuestionDraftInput = {
 };
 
 export type AiLearnError = {
-  code: "rate_limited" | "not_configured" | "ai_failed" | "forbidden";
+  code:
+    | "rate_limited"
+    | "not_configured"
+    | "upstream_5xx"
+    | "upstream_timeout"
+    | "ai_parse_failed"
+    | "ai_failed"
+    | "forbidden";
   message: string;
+  /**
+   * 仅 upstream_5xx / upstream_timeout / ai_parse_failed 时建议给前端展示"重试"按钮;
+   * not_configured / rate_limited / forbidden / ai_failed (兜底) 不建议重试。
+   */
+  retryable?: boolean;
+  /** AiGatewayError 透出的尝试次数, 给前端日志/排查链路用。 */
+  attemptCount?: number;
 };
 
 export function toAiLearnError(error: unknown): AiLearnError {
   if (error instanceof AiGatewayError) {
+    const attemptCount = error.attemptCount;
     if (error.code === "not_configured") {
-      return { code: "not_configured", message: error.message };
+      return { code: "not_configured", message: error.message, attemptCount };
     }
     if (error.code === "rate_limited") {
-      return { code: "rate_limited", message: error.message };
+      return { code: "rate_limited", message: error.message, attemptCount };
     }
-    return { code: "ai_failed", message: error.message };
+    if (error.code === "upstream_5xx") {
+      return {
+        code: "upstream_5xx",
+        message: error.message || "AI 服务端暂时不可用, 可稍后重试。",
+        retryable: true,
+        attemptCount,
+      };
+    }
+    if (error.code === "upstream_timeout") {
+      return {
+        code: "upstream_timeout",
+        message: error.message || "AI 网关响应过慢, 可稍后重试。",
+        retryable: true,
+        attemptCount,
+      };
+    }
+    if (error.code === "upstream_parse_failed") {
+      return {
+        code: "ai_parse_failed",
+        message: error.message || "AI 返回内容解析失败, 可重试。",
+        retryable: true,
+        attemptCount,
+      };
+    }
+    // 普通 upstream (4xx 非 429 / 网络层)。重试已经在网关层用完, 这里默认不再建议前端再点。
+    return { code: "ai_failed", message: error.message, attemptCount };
   }
   if (error instanceof Error && error.message.includes("未找到")) {
     return { code: "forbidden", message: error.message };
   }
   if (error instanceof AiDraftValidationError) {
-    return { code: "ai_failed", message: error.message };
+    return { code: "ai_parse_failed", message: error.message, retryable: true };
+  }
+  // 例如 aiSchemas.server.ts 抛出的 "AI 返回的不是合法 JSON" / "AI 返回结构非对象"。
+  if (error instanceof Error && /AI 返回(的不是合法 JSON|结构非对象)/.test(error.message)) {
+    return { code: "ai_parse_failed", message: error.message, retryable: true };
   }
   return {
     code: "ai_failed",
@@ -135,6 +179,38 @@ async function assertAttemptExists(
   return latest;
 }
 
+/**
+ * 把日志写入排到响应之外: 用户等的是 AI 文本, 不是 D1 INSERT。
+ *
+ * 拿到 ExecutionContext 时走 ctx.waitUntil — Workers runtime 会保活 worker
+ * 直到 promise settle, 不阻塞 fetch 返回, 也不会被 GC 提前杀掉。拿不到时
+ * (单元测试 / 直接调用) 退回单纯的 fire-and-forget, 加 .catch 防止
+ * unhandledRejection 把进程拖崩。
+ *
+ * 关键点: 即便日志写失败, 用户已经拿到 AI 回复 — 日志只是观测面,
+ * 不应该影响功能。
+ */
+function fireAndForget(
+  ctx: ExecutionContext | undefined,
+  work: Promise<unknown>,
+): void {
+  const guarded = work.catch((err) => {
+    console.error("[ai-log] background write failed", err);
+  });
+  if (ctx) {
+    try {
+      ctx.waitUntil(guarded);
+      return;
+    } catch (err) {
+      // Workers runtime 偶尔会拒绝 waitUntil (比如响应已发送过久),
+      // 这种情况退回普通 fire-and-forget 而不是把错误抛给调用方。
+      console.warn("[ai-log] ctx.waitUntil rejected; falling back", err);
+    }
+  }
+  // 不需要 await 也不需要 return — guarded 已经吃掉了 rejection。
+  void guarded;
+}
+
 async function runAiFeature(
   db: D1Database,
   env: Env,
@@ -148,6 +224,11 @@ async function runAiFeature(
     prompt: string;
     input: unknown;
     hintLevel?: number;
+    /**
+     * Workers 的 ExecutionContext, 用来把日志写入交给 ctx.waitUntil。
+     * 调用方拿不到时 (脚本 / 测试) 留空即可, 自动退回 fire-and-forget。
+     */
+    executionCtx?: ExecutionContext;
   },
 ): Promise<AiLearnResult> {
   try {
@@ -172,31 +253,34 @@ async function runAiFeature(
                     : undefined,
     });
 
-    await Promise.all([
-      logAiExplanation(db, {
-        userId: params.userId,
-        questionId: params.questionId,
-        attemptId: params.attemptId,
-        feature: params.feature,
-        promptType: params.promptType,
-        input: params.input,
-        output: response.text,
-        provider: response.provider,
-        model: response.model,
-        success: true,
-        latencyMs: response.latencyMs,
-      }),
-      logAiUsage(db, {
-        userId: params.userId,
-        feature: params.feature,
-        provider: response.provider,
-        model: response.model,
-        inputTokens: response.inputTokens,
-        outputTokens: response.outputTokens,
-        latencyMs: response.latencyMs,
-        success: true,
-      }),
-    ]);
+    fireAndForget(
+      params.executionCtx,
+      Promise.all([
+        logAiExplanation(db, {
+          userId: params.userId,
+          questionId: params.questionId,
+          attemptId: params.attemptId,
+          feature: params.feature,
+          promptType: params.promptType,
+          input: params.input,
+          output: response.text,
+          provider: response.provider,
+          model: response.model,
+          success: true,
+          latencyMs: response.latencyMs,
+        }),
+        logAiUsage(db, {
+          userId: params.userId,
+          feature: params.feature,
+          provider: response.provider,
+          model: response.model,
+          inputTokens: response.inputTokens,
+          outputTokens: response.outputTokens,
+          latencyMs: response.latencyMs,
+          success: true,
+        }),
+      ]),
+    );
 
     return {
       text: response.text,
@@ -206,25 +290,36 @@ async function runAiFeature(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "AI 请求失败";
+    // G: 网关层透传了 attemptCount; 写进 error_message 末尾, 方便事后查"重试有没有救回来"。
+    const attemptCount =
+      error instanceof AiGatewayError && error.attemptCount
+        ? error.attemptCount
+        : undefined;
+    const annotated = attemptCount && attemptCount > 1
+      ? `${message} [attempts=${attemptCount}]`
+      : message;
 
-    await Promise.all([
-      logAiExplanation(db, {
-        userId: params.userId,
-        questionId: params.questionId,
-        attemptId: params.attemptId,
-        feature: params.feature,
-        promptType: params.promptType,
-        input: params.input,
-        success: false,
-        error: message,
-      }),
-      logAiUsage(db, {
-        userId: params.userId,
-        feature: params.feature,
-        success: false,
-        error: message,
-      }),
-    ]);
+    fireAndForget(
+      params.executionCtx,
+      Promise.all([
+        logAiExplanation(db, {
+          userId: params.userId,
+          questionId: params.questionId,
+          attemptId: params.attemptId,
+          feature: params.feature,
+          promptType: params.promptType,
+          input: params.input,
+          success: false,
+          error: annotated,
+        }),
+        logAiUsage(db, {
+          userId: params.userId,
+          feature: params.feature,
+          success: false,
+          error: annotated,
+        }),
+      ]),
+    );
 
     throw error;
   }
@@ -241,6 +336,7 @@ export async function generateHint(
     userAnswer?: UserAnswer;
     previousHintCount: number;
   },
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   const attempt = await assertWrongAttemptExists(
     db,
@@ -273,6 +369,7 @@ export async function generateHint(
       previousHintCount: params.previousHintCount,
     },
     hintLevel,
+    executionCtx: ctx,
   });
 
   return result;
@@ -283,6 +380,7 @@ export async function generateExplanation(
   env: Env,
   questionId: string,
   input: AiExplanationInput,
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   // 放宽: 对错都讲(答对→确认+加深, 答错→纠正), 但必须先提交过。
   const attempt = await assertAttemptExists(db, input.userId, questionId);
@@ -298,6 +396,7 @@ export async function generateExplanation(
     systemPrompt: built.systemPrompt,
     prompt: built.prompt,
     input,
+    executionCtx: ctx,
   });
 
   // v3: AI 直接产 markdown 成品, 前端用 AiMarkdown 整块画。不再解析行锚定 JSON。
@@ -314,6 +413,7 @@ export async function generateMistakeSummary(
     course: Course;
     lesson: Lesson;
   },
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   const built = buildMistakeSummaryPrompt(params.mistake, params.question, {
     courseTitle: params.course.title,
@@ -332,6 +432,7 @@ export async function generateMistakeSummary(
       mistakeId: params.mistake.id,
       questionId: params.question.id,
     },
+    executionCtx: ctx,
   });
 }
 
@@ -344,6 +445,7 @@ export async function generateExamReview(
     result: ExamResult;
     questions: Question[];
   },
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   const built = buildExamReviewPrompt(
     params.exam,
@@ -362,6 +464,7 @@ export async function generateExamReview(
       resultId: params.result.id,
       score: params.result.score,
     },
+    executionCtx: ctx,
   });
 }
 
@@ -369,6 +472,7 @@ export async function generateAndValidateQuestionDraft(
   db: D1Database,
   env: Env,
   params: GenerateQuestionDraftInput,
+  ctx?: ExecutionContext,
 ): Promise<GenerateQuestionsFromSnippetResult> {
   const built = buildQuestionGenerationPrompt({
     sourceTitle: params.sourceTitle,
@@ -440,51 +544,57 @@ export async function generateAndValidateQuestionDraft(
       generated: parsed.data,
     });
 
-    await Promise.all([
-      logAiExplanation(db, {
-        userId: params.userId,
-        feature: "question_generation",
-        promptType: built.promptType,
-        input,
-        output: response.text,
-        provider: response.provider,
-        model: response.model,
-        success: true,
-        latencyMs: response.latencyMs,
-      }),
-      logAiUsage(db, {
-        userId: params.userId,
-        feature: "question_generation",
-        provider: response.provider,
-        model: response.model,
-        inputTokens: response.inputTokens,
-        outputTokens: response.outputTokens,
-        latencyMs: response.latencyMs,
-        success: true,
-      }),
-    ]);
+    fireAndForget(
+      ctx,
+      Promise.all([
+        logAiExplanation(db, {
+          userId: params.userId,
+          feature: "question_generation",
+          promptType: built.promptType,
+          input,
+          output: response.text,
+          provider: response.provider,
+          model: response.model,
+          success: true,
+          latencyMs: response.latencyMs,
+        }),
+        logAiUsage(db, {
+          userId: params.userId,
+          feature: "question_generation",
+          provider: response.provider,
+          model: response.model,
+          inputTokens: response.inputTokens,
+          outputTokens: response.outputTokens,
+          latencyMs: response.latencyMs,
+          success: true,
+        }),
+      ]),
+    );
 
     return { draft };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "AI 请求失败";
 
-    await Promise.all([
-      logAiExplanation(db, {
-        userId: params.userId,
-        feature: "question_generation",
-        promptType: built.promptType,
-        input,
-        success: false,
-        error: message,
-      }),
-      logAiUsage(db, {
-        userId: params.userId,
-        feature: "question_generation",
-        success: false,
-        error: message,
-      }),
-    ]);
+    fireAndForget(
+      ctx,
+      Promise.all([
+        logAiExplanation(db, {
+          userId: params.userId,
+          feature: "question_generation",
+          promptType: built.promptType,
+          input,
+          success: false,
+          error: message,
+        }),
+        logAiUsage(db, {
+          userId: params.userId,
+          feature: "question_generation",
+          success: false,
+          error: message,
+        }),
+      ]),
+    );
 
     throw error;
   }
@@ -502,21 +612,27 @@ export async function generateQuestionsFromSnippet(
     generationGoal: string;
     desiredQuestionCount?: number;
   },
+  ctx?: ExecutionContext,
 ): Promise<GenerateQuestionsFromSnippetResult> {
-  return generateAndValidateQuestionDraft(db, env, {
-    userId: params.userId,
-    snippetId: params.snippet.id,
-    sourceTitle: params.snippet.title,
-    sourceCode: params.snippet.code,
-    sourceFilePath: params.snippet.sourceFilePath,
-    projectContext: params.snippet.projectContext,
-    userConfusion: params.snippet.userConfusion,
-    targetAbilities: params.targetAbilities,
-    preferredQuestionTypes: params.preferredQuestionTypes,
-    difficulty: params.difficulty,
-    generationGoal: params.generationGoal,
-    desiredQuestionCount: params.desiredQuestionCount,
-  });
+  return generateAndValidateQuestionDraft(
+    db,
+    env,
+    {
+      userId: params.userId,
+      snippetId: params.snippet.id,
+      sourceTitle: params.snippet.title,
+      sourceCode: params.snippet.code,
+      sourceFilePath: params.snippet.sourceFilePath,
+      projectContext: params.snippet.projectContext,
+      userConfusion: params.snippet.userConfusion,
+      targetAbilities: params.targetAbilities,
+      preferredQuestionTypes: params.preferredQuestionTypes,
+      difficulty: params.difficulty,
+      generationGoal: params.generationGoal,
+      desiredQuestionCount: params.desiredQuestionCount,
+    },
+    ctx,
+  );
 }
 
 export function parseAttemptUserAnswer(row: {
@@ -550,6 +666,7 @@ export async function generateLessonTeaching(
   db: D1Database,
   env: Env,
   input: GenerateLessonTeachingInput,
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   const built = buildLessonTeachingPrompt({
     courseTitle: input.courseTitle,
@@ -578,6 +695,7 @@ export async function generateLessonTeaching(
       primaryFilePath: input.primaryFilePath,
       hasCode: input.primaryFileCode.trim().length > 0,
     },
+    executionCtx: ctx,
   });
 }
 
@@ -598,6 +716,7 @@ export async function generateCodeOrientation(
     lessonFocus: string;
     abilityTags: string[];
   },
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   const built = buildCodeOrientationPrompt({
     lessonTitle: input.lessonTitle,
@@ -614,6 +733,7 @@ export async function generateCodeOrientation(
     systemPrompt: built.systemPrompt,
     prompt: built.prompt,
     input: { filePath: input.filePath },
+    executionCtx: ctx,
   });
 
   // v3: AI 直接产 markdown 成品。
@@ -634,6 +754,7 @@ export async function generateLessonDiagram(
   db: D1Database,
   env: Env,
   input: GenerateLessonDiagramInput,
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   const built = buildLessonDiagramPrompt({
     courseTitle: input.courseTitle,
@@ -662,6 +783,7 @@ export async function generateLessonDiagram(
       primaryFilePath: input.primaryFilePath,
       hasCode: input.primaryFileCode.trim().length > 0,
     },
+    executionCtx: ctx,
   });
 
   // 即便 system prompt 严令禁止, 模型仍可能习惯性包 ```mermaid ... ``` 代码块,
@@ -714,6 +836,7 @@ export async function generateQuestionDiagram(
   env: Env,
   questionId: string,
   input: AiExplanationInput,
+  ctx?: ExecutionContext,
 ): Promise<AiLearnResult> {
   // 放宽门禁: 提交过即可(对错都给图)。
   const attempt = await assertAttemptExists(db, input.userId, questionId);
@@ -729,6 +852,7 @@ export async function generateQuestionDiagram(
     systemPrompt: built.systemPrompt,
     prompt: built.prompt,
     input,
+    executionCtx: ctx,
   });
 
   // 复用 lesson_diagram 的清洗: 剥 ```mermaid 围栏 + 删掉 flowchart 里误用的 `Note over`。

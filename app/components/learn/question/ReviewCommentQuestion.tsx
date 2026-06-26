@@ -44,6 +44,7 @@ export function ReviewCommentQuestion({
             onChange({ type: "review_comment", comment: e.target.value })
           }
           disabled={disabled}
+          aria-label="你的 PR Review 评语"
           rows={6}
           placeholder="指出修改的具体问题：哪一行要改、为什么改、改成什么样。"
           className="w-full rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--surface-sunken)] p-3 text-sm leading-relaxed text-[var(--fg-primary)] shadow-inner transition-colors focus:border-pink-400 focus:outline-none focus:ring-2 focus:ring-pink-400/20 disabled:opacity-60"

@@ -54,6 +54,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 
   const db = context.cloudflare.env.DB;
   const env = context.cloudflare.env;
+  const ctx = context.cloudflare.ctx;
   const { userId, headers: cookieHeaders } = ensureLearnUser(request);
   const exam = await getExamBySlug(db, params.examSlug!);
 
@@ -102,7 +103,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
         exam,
         result,
         questions,
-      });
+      }, ctx);
       return data({ ok: true as const, text: ai.text }, responseHeaders);
     } catch (error) {
       const aiError = toAiLearnError(error);

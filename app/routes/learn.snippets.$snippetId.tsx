@@ -81,6 +81,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 
   const db = context.cloudflare.env.DB;
   const env = context.cloudflare.env;
+  const ctx = context.cloudflare.ctx;
   const { userId, headers: cookieHeaders } = ensureLearnUser(request);
   const snippetId = params.snippetId;
   const formData = await request.formData();
@@ -136,7 +137,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
         difficulty,
         generationGoal,
         desiredQuestionCount,
-      });
+      }, ctx);
 
       return data(
         {

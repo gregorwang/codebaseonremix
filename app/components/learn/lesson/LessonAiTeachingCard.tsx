@@ -18,9 +18,17 @@
  */
 import { useEffect, useState } from "react";
 import { useFetcher } from "react-router";
+import type { AiErrorCode } from "~/lib/learn/aiErrorCode";
+import { AiErrorBox } from "~/components/learn/ui/AiErrorBox";
 import { AiMarkdown } from "~/components/learn/ui/AiMarkdown";
 import { MermaidDiagram } from "~/components/learn/ui/MermaidDiagram";
 import { usePersistedCollapsed } from "~/components/learn/ui/usePersistedCollapsed";
+import {
+  AiLoadingPhases,
+  AI_DIAGRAM_PHASES,
+  AI_LESSON_COMBO_PHASES,
+  AI_LESSON_TEACHING_PHASES,
+} from "~/components/learn/ui/AiLoadingPhases";
 
 type TeachingActionData =
   | {
@@ -32,7 +40,7 @@ type TeachingActionData =
   | {
       ok: false;
       error: string;
-      code?: "rate_limited" | "not_configured" | "ai_failed" | "forbidden";
+      code?: AiErrorCode;
     };
 
 type DiagramActionData =
@@ -45,7 +53,7 @@ type DiagramActionData =
   | {
       ok: false;
       error: string;
-      code?: "rate_limited" | "not_configured" | "ai_failed" | "forbidden";
+      code?: AiErrorCode;
     };
 
 type TabKey = "teaching" | "diagram";
@@ -237,8 +245,13 @@ export function LessonAiTeachingCard({
               >
                 <path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z" />
               </svg>
-              {anyLoading ? "AI 正在写讲解 + 画图…" : "让 AI 讲解 + 画思维导图"}
+              {anyLoading ? "AI 生成中…" : "让 AI 讲解 + 画思维导图"}
             </button>
+            {anyLoading && (
+              <div className="mt-2">
+                <AiLoadingPhases phases={AI_LESSON_COMBO_PHASES} />
+              </div>
+            )}
             {(teachingError || diagramError) && (
               <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
                 {teachingError?.error ?? diagramError?.error}
@@ -436,26 +449,22 @@ function TeachingTabBody({
 }: {
   text: string | null;
   loading: boolean;
-  error: { error: string } | null;
+  error: { error: string; code?: AiErrorCode } | null;
   onGenerate: () => void;
 }) {
   if (text) {
     return (
       <>
         <AiMarkdown text={text} />
-        {error && (
-          <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
-            {error.error}
-          </p>
-        )}
+        {error && <AiErrorBox error={error} onRetry={onGenerate} />}
       </>
     );
   }
   if (loading) {
     return (
-      <p className="text-sm text-[var(--fg-soft)]">
-        AI 正在写文字讲解…
-      </p>
+      <div className="rounded-lg border border-violet-200/40 bg-violet-50/30 p-3 dark:border-violet-500/20 dark:bg-violet-950/20">
+        <AiLoadingPhases phases={AI_LESSON_TEACHING_PHASES} />
+      </div>
     );
   }
   return (
@@ -465,7 +474,7 @@ function TeachingTabBody({
       cta="生成文字讲解"
       icon="book"
       onClick={onGenerate}
-      error={error?.error}
+      error={error}
     />
   );
 }
@@ -478,26 +487,22 @@ function DiagramTabBody({
 }: {
   source: string | null;
   loading: boolean;
-  error: { error: string } | null;
+  error: { error: string; code?: AiErrorCode } | null;
   onGenerate: () => void;
 }) {
   if (source) {
     return (
       <>
         <MermaidDiagram source={source} />
-        {error && (
-          <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
-            {error.error}
-          </p>
-        )}
+        {error && <AiErrorBox error={error} onRetry={onGenerate} />}
       </>
     );
   }
   if (loading) {
     return (
-      <p className="text-sm text-[var(--fg-soft)]">
-        AI 正在画思维导图…
-      </p>
+      <div className="rounded-lg border border-violet-200/40 bg-violet-50/30 p-3 dark:border-violet-500/20 dark:bg-violet-950/20">
+        <AiLoadingPhases phases={AI_DIAGRAM_PHASES} />
+      </div>
     );
   }
   return (
@@ -507,7 +512,7 @@ function DiagramTabBody({
       cta="生成思维导图"
       icon="brain"
       onClick={onGenerate}
-      error={error?.error}
+      error={error}
     />
   );
 }
@@ -530,7 +535,7 @@ function EmptyTabCallout({
   cta: string;
   icon: "book" | "brain";
   onClick: () => void;
-  error?: string;
+  error?: { error: string; code?: AiErrorCode } | null;
 }) {
   return (
     <div className="rounded-xl border border-violet-200/60 bg-gradient-to-br from-violet-50/70 via-white to-indigo-50/40 p-5 dark:border-violet-500/30 dark:from-violet-950/30 dark:via-[var(--surface-raised)] dark:to-indigo-950/30">
@@ -589,11 +594,7 @@ function EmptyTabCallout({
             </svg>
             {cta}
           </button>
-          {error && (
-            <p className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
-              {error}
-            </p>
-          )}
+          {error && <AiErrorBox error={error} onRetry={onClick} small />}
         </div>
       </div>
     </div>

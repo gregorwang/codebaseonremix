@@ -36,6 +36,7 @@ export function FreeExplainQuestion({
             onChange({ type: "free_explain", text: e.target.value })
           }
           disabled={disabled}
+          aria-label="你对这段代码的复述"
           rows={5}
           placeholder="用 2–4 句中文说明：这段代码的输入、输出、关键控制流，以及它和上下游的边界。"
           className="w-full rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--surface-sunken)] p-3 text-sm leading-relaxed text-[var(--fg-primary)] shadow-inner transition-colors focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-400/20 disabled:opacity-60"

@@ -35,7 +35,11 @@ export function LinePickQuestion({
         </div>
       )}
       {lines.length > 0 && (
-        <div className="mt-4 space-y-2">
+        <div
+          className="mt-4 space-y-2"
+          role="radiogroup"
+          aria-label="代码定位选项（单选）"
+        >
           <p className="text-sm font-medium text-[var(--fg-muted)]">
             点击定位关键行（单选）：
           </p>
@@ -45,6 +49,9 @@ export function LinePickQuestion({
               <button
                 key={line.id}
                 type="button"
+                role="radio"
+                aria-checked={isSelected}
+                aria-label={`第 ${line.lineNumber} 行：${line.text}`}
                 disabled={disabled}
                 onClick={() => onChange({ type: "line_pick", lineId: line.id })}
                 className={`w-full rounded-xl border bg-[var(--surface-raised)] px-4 py-3 text-left transition-all ${

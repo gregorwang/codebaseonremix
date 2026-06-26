@@ -45,33 +45,47 @@ export default function AbilityMapPage({ loaderData }: Route.ComponentProps) {
     <div>
       <PageHeader
         title="能力树"
-        description="主视图：Remix 项目模块读懂进度；副视图：解题技能标签。"
+        description="主视图：解题技能标签；副视图：Remix 项目模块读懂进度。"
       />
 
-      <section className="mt-6">
-        <h2 className="mb-4 text-xl font-semibold">Remix 项目地图</h2>
-        <RemixModuleMap modules={remixModules} />
+      {/* AbilityMap 提到首屏: 用户来这页最想看的是"我具体哪些能力在长"。 */}
+      <section className="mt-6" aria-labelledby="ability-tags-heading">
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <h2
+            id="ability-tags-heading"
+            className="text-lg font-semibold text-[var(--fg-primary)]"
+          >
+            解题技能标签
+          </h2>
+          <p className="text-xs text-[var(--fg-soft)]">
+            按 15 个能力维度展示掌握度
+          </p>
+        </div>
+        <AbilityOverviewRing
+          scoreByTag={scoreByTag}
+          curriculumTags={curriculumTags}
+        />
+        <div className="mt-6">
+          <AbilityMap scoreByTag={scoreByTag} curriculumTags={curriculumTags} />
+        </div>
       </section>
 
-      <div className="mt-10">
-        <AbilityOverviewRing scoreByTag={scoreByTag} curriculumTags={curriculumTags} />
-      </div>
-
-      <div className="mt-6">
+      <div className="mt-8">
         <AbilitySummary
           weakAbilities={weakAbilities}
           recommendations={recommendations}
         />
       </div>
 
-      <details className="mt-8">
-        <summary className="cursor-pointer text-lg font-semibold text-slate-700 dark:text-slate-300">
-          解题技能标签（折叠）
-        </summary>
-        <div className="mt-4">
-          <AbilityMap scoreByTag={scoreByTag} curriculumTags={curriculumTags} />
-        </div>
-      </details>
+      <section className="mt-10" aria-labelledby="remix-modules-heading">
+        <h2
+          id="remix-modules-heading"
+          className="mb-4 text-lg font-semibold text-[var(--fg-primary)]"
+        >
+          Remix 项目地图（辅助视图）
+        </h2>
+        <RemixModuleMap modules={remixModules} />
+      </section>
     </div>
   );
 }

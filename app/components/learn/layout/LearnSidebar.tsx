@@ -148,7 +148,7 @@ export function LearnSidebar({
   }
 
   const panelClass = [
-    "z-50 flex h-full w-64 shrink-0 flex-col gap-6 border-r border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 py-5",
+    "z-50 flex h-full w-[80vw] max-w-64 shrink-0 flex-col gap-6 border-r border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 py-5",
     "fixed inset-y-0 left-0 transition-transform duration-200 lg:static lg:translate-x-0",
     mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
     collapsed ? "lg:hidden" : "",
@@ -204,18 +204,22 @@ export function LearnSidebar({
               管理后台
             </p>
             <ul className="space-y-1">
-              {adminItems.map((item) => (
-                <li key={item.to}>
-                  <Link
-                    to={item.to}
-                    onClick={onMobileClose}
-                    className={navLinkClass(isActive(item.to), true)}
-                  >
-                    <span className="text-current">{item.icon}</span>
-                    <span>{item.label}</span>
-                  </Link>
-                </li>
-              ))}
+              {adminItems.map((item) => {
+                const active = isActive(item.to);
+                return (
+                  <li key={item.to}>
+                    <Link
+                      to={item.to}
+                      onClick={onMobileClose}
+                      aria-current={active ? "page" : undefined}
+                      className={navLinkClass(active, true)}
+                    >
+                      <span className="text-current">{item.icon}</span>
+                      <span>{item.label}</span>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -239,18 +243,22 @@ function NavGroup({
         {group.label}
       </p>
       <ul className="space-y-1">
-        {group.items.map((item) => (
-          <li key={item.to}>
-            <Link
-              to={item.to}
-              onClick={onClick}
-              className={navLinkClass(isActive(item.to), false)}
-            >
-              <span className="text-current">{item.icon}</span>
-              <span>{item.label}</span>
-            </Link>
-          </li>
-        ))}
+        {group.items.map((item) => {
+          const active = isActive(item.to);
+          return (
+            <li key={item.to}>
+              <Link
+                to={item.to}
+                onClick={onClick}
+                aria-current={active ? "page" : undefined}
+                className={navLinkClass(active, false)}
+              >
+                <span className="text-current">{item.icon}</span>
+                <span>{item.label}</span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

@@ -73,6 +73,8 @@ export function DebugQuestion({
             >
               <input
                 type="radio"
+                name={`q-${question.id}`}
+                value={option.id}
                 checked={isSelected}
                 disabled={disabled}
                 onChange={() =>

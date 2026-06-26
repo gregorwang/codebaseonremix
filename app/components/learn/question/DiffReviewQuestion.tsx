@@ -120,6 +120,7 @@ export function DiffReviewQuestion({
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           disabled={disabled}
+          aria-label="评审理由"
           rows={3}
           placeholder="例如：AI 漏掉了 session 守门，会让未登录用户看到受保护 UI。"
           className="w-full rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--surface-sunken)] p-3 text-sm leading-relaxed text-[var(--fg-primary)] shadow-inner transition-colors focus:border-[var(--color-brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand-500)]/20 disabled:opacity-60"

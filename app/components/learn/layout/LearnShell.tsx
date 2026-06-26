@@ -56,6 +56,15 @@ export function LearnShell({
 
   return (
     <div className="flex min-h-screen text-[var(--fg-primary)]">
+      {/* 键盘可见的 skip link: 默认 .sr-only, focus 时浮出。键盘用户每次进页
+          不必再 Tab 穿过整条侧边栏才能到主区。链接到下面 <main> 的 id。 */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-[60] focus:rounded-full focus:bg-[var(--color-brand-500)] focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+      >
+        跳到主内容
+      </a>
+
       <LearnSidebar
         isAdmin={isAdmin}
         mobileOpen={sidebarOpen}
@@ -80,7 +89,9 @@ export function LearnShell({
           sidebarCollapsed={collapsed}
           onToggleSidebar={toggleCollapsed}
         />
-        <main className={mainClass}>{children}</main>
+        <main id="main-content" tabIndex={-1} className={mainClass}>
+          {children}
+        </main>
       </div>
     </div>
   );

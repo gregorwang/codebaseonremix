@@ -48,6 +48,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   const db = context.cloudflare.env.DB;
   const env = context.cloudflare.env;
+  const ctx = context.cloudflare.ctx;
   const { userId, headers: cookieHeaders } = ensureLearnUser(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
@@ -96,7 +97,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         question,
         course,
         lesson,
-      });
+      }, ctx);
 
       await updateMistakeAiSummary(db, userId, mistakeId, result.text);
 

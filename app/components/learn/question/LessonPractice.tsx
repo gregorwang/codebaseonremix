@@ -10,6 +10,7 @@ import {
 import type { LessonProgressSummary } from "~/lib/server/learn/attempts.server";
 import type { CachedQuestionSummary } from "~/lib/server/learn/cache-lesson.server";
 import { ProgressBar } from "~/components/learn/ui/ProgressBar";
+import { useBeforeUnloadGuard } from "~/components/learn/ui/useBeforeUnloadGuard";
 import { AnnotatedSourceCard } from "~/components/learn/code/AnnotatedSourceCard";
 import { DiagramCard } from "~/components/learn/code/DiagramCard";
 import { ExplanationPanel } from "./ExplanationPanel";
@@ -78,6 +79,11 @@ export function LessonPractice({
   const fetcher = useFetcher<SubmitActionData>();
   const [, setSearchParams] = useSearchParams();
   const [answer, setAnswer] = useState<UserAnswer | null>(null);
+  // dirty: 用户对当前题"主动"动过 (拨过选项 / 敲过空 / 拖过顺序)。
+  // 用来给 useBeforeUnloadGuard 判断: 答了一半关页要不要拦。
+  // 注意必须区分"用户输入"和下面那个 useEffect 自动初始化排序 / 填空答案的默认值,
+  // 否则一进页面就触发 beforeunload, 用户体验更差。
+  const [dirty, setDirty] = useState(false);
   const [resultsByQuestion, setResultsByQuestion] = useState<
     Record<string, SubmitActionData>
   >({});
@@ -150,8 +156,12 @@ export function LessonPractice({
   useEffect(() => {
     if (!currentQuestionResolved) {
       setAnswer(null);
+      setDirty(false);
       return;
     }
+    // 切到新题: 清掉"已修改"标记, 这样未真正动手的 sort/fill_blank 默认值
+    // 不会触发 beforeunload 警告。
+    setDirty(false);
     if (
       currentQuestionResolved.type === "sort" &&
       currentQuestionResolved.sortItems
@@ -176,6 +186,10 @@ export function LessonPractice({
     }
     setAnswer(null);
   }, [currentQuestionResolved?.id]);
+
+  // beforeunload: 选了答案但还没提交时, 关 tab / 刷新前弹系统确认。
+  // 提交中 (isSubmitting) 不拦, 否则会和正常的 form submit 撞到一起。
+  useBeforeUnloadGuard(dirty && !submittedForCurrent && !isSubmitting);
 
   if (!currentQuestionResolved) {
     return (
@@ -226,7 +240,7 @@ export function LessonPractice({
   ]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-24">
       {/* 卡1: 源码 + 行内 AI 讲解(答题前导读 / 答题后结合答案) */}
       <AnnotatedSourceCard
         files={sourceFiles}
@@ -259,8 +273,8 @@ export function LessonPractice({
         />
       </div>
 
-      {/* 卡2: 题目 */}
-      <div className="studio-card p-6" id="answer-feedback">
+      {/* 卡2: 题目 (id="answer-feedback" 由 ExplanationPanel 自身承担, 不在外层重复) */}
+      <div className="studio-card p-6">
         <QuestionMetaBar question={currentQuestionResolved} />
         <h2 className="mb-4 text-lg font-semibold tracking-tight text-[var(--fg-primary)]">
           {currentQuestionResolved.title}
@@ -268,7 +282,12 @@ export function LessonPractice({
         <QuestionRenderer
           question={currentQuestionResolved}
           value={answer}
-          onChange={setAnswer}
+          onChange={(next) => {
+            setAnswer(next);
+            // 任何一次 onChange 都视为"用户动手过"。这里不再判断值是否相等,
+            // 因为对 sort/排序 而言 setAnswer 同一份 itemIds 引用就足以代表"用户碰过"。
+            setDirty(true);
+          }}
           disabled={submittedForCurrent || isSubmitting}
           feedback={feedback}
         />

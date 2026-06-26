@@ -65,6 +65,7 @@ export function CodeFixQuestion({
           value={text}
           onChange={(e) => handle(e.target.value)}
           disabled={disabled}
+          aria-label="你的代码修复"
           spellCheck={false}
           rows={Math.max(6, baseline.split("\n").length + 2)}
           className="w-full rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--code-bg)] p-3 font-mono text-sm leading-6 text-[var(--code-fg)] shadow-inner transition-colors focus:border-[var(--color-brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand-500)]/20 disabled:opacity-60"

@@ -53,6 +53,8 @@ export function PositionJudgementQuestion({
                 </span>
                 <input
                   type="radio"
+                  name={`q-${question.id}`}
+                  value={option.id}
                   checked={isSelected}
                   disabled={disabled}
                   onChange={() =>

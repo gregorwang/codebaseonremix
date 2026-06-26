@@ -59,6 +59,8 @@ export function AiReviewQuestion({
               >
                 <input
                   type="radio"
+                  name={`q-${question.id}-choice`}
+                  value={option.id}
                   checked={isSelected}
                   disabled={disabled}
                   onChange={() =>
