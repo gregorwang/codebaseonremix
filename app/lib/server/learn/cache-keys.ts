@@ -39,14 +39,17 @@ export const LEARN_CACHE_KEYS = {
    * - explanation: 按 (questionId, answerHash) 缓存, 不写入用户身份。
    * 与 codeOrientation / aiExplanation 是两条独立链路, 互不污染缓存。
    *
-   * key path 用 "code-explain-v5" — 与 v4 的 "code-explain" 分开命名空间,
-   * 让 v4 旧 KV 自然过期 (annotations 形状的旧缓存不会被 v5 parser 解析)。
+   * key path 历史:
+   *   - code-explain        v4 卡片版 (已废弃)
+   *   - code-explain-v5     v5a 单栏版 (prompt 未喂行号, AI 行号普遍飘 ±10 行, 弃用)
+   *   - code-explain-v5b    v5b 单栏版 (prompt 给源码加 `N | ` 行号前缀 + 锚定铁律, 当前)
+   * 命名空间隔离让上一轮飘掉的脏 KV 自然淘汰, 不污染新讲义。
    */
   codeExplainOrientation: (filePath: string) =>
-    learnCacheKey("code-explain-v5", "orientation", filePath),
+    learnCacheKey("code-explain-v5b", "orientation", filePath),
   codeExplainAfterAnswer: (questionId: string, answerHash: string) =>
     learnCacheKey(
-      "code-explain-v5",
+      "code-explain-v5b",
       "after-answer",
       questionId,
       answerHash,

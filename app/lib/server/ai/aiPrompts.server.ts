@@ -649,12 +649,19 @@ const CODE_EXPLAIN_JSON_CONTRACT = `## 输出格式 (硬性, 不允许偏离)
   - line 27 → "定义 root loader, 进入页面前先准备全局数据"
   - line 28 → "读取主题 cookie, 决定 html/body 初始主题"
 - 不重复 / 不啰嗦; 不要 "这是一个 useEffect" 这种废话。
-- 行号 1-based, 必须落在文件总行数内。
+- **行号锚定铁律 (常见错误)**:
+  - line **必须是被描述代码本身的那一行**, 抄输入里 \`<行号> | <代码>\` 最左边那个数字。
+  - **严禁**把旁批挂在函数前的空行、上面那行 \`// xxx\` 注释、import 行上 ——
+    例: 想讲 \`export const loader = ...\` 的角色, line 必须等于 \`export\` 那一行的行号,
+    **不能**等于上面 \`// Root loader - Better Auth integration\` 那行的行号。
+  - 描述跨多行的语句时 (例如多行 import / 多行 return), line 写**该语句起始行**的行号, 不要写中间行。
+  - **写出来之前先回头核对一次**: 把你要批注的那行代码的前 10 个字符, 在输入里搜一下, 确认前缀的行号和你写进 line 的数字一致。
 
 ## blockNotes (段讲解块)
 
 - 2 ~ 5 段, 选关键代码段做深入讲解 (跨多行的因果点, 而不是单行琐事)。
 - 按 startLine 升序; 段之间不要互相覆盖大段重叠 (允许小范围嵌套但要有意义)。
+- **startLine / endLine 同 lineNotes 一样, 直接抄输入里前缀的行号, 不要自己数**。
 - level 选取:
   - **basic**: 普通说明, 帮助新人理解角色。
   - **important**: 这段是这个文件的关键因果点, 漏看会读不懂全局。
@@ -711,7 +718,16 @@ export function buildCodeExplainPrompt(input: {
   };
 }): { systemPrompt: string; prompt: string; promptType: string } {
   const hasCode = input.fileCode.trim().length > 0;
-  const totalLines = hasCode ? input.fileCode.split(/\r?\n/).length : 0;
+  const rawLines = hasCode ? input.fileCode.split(/\r?\n/) : [];
+  const totalLines = rawLines.length;
+
+  // 关键: 给每行加 `   N | ` 前缀, 让 AI 抄左边那个数字当 line / startLine / endLine,
+  // 不用自己数行。v5a 用裸代码时 AI 的行号普遍飘 ±10 行 (尤其遇到 import 块、空行、
+  // 注释行的时候), 加前缀后实测能拉回到 ±1 以内。
+  const padWidth = String(totalLines || 1).length;
+  const numberedCode = rawLines
+    .map((line, i) => `${String(i + 1).padStart(padWidth, " ")} | ${line}`)
+    .join("\n");
 
   const parts: string[] = [
     "请按 system 要求的 JSON 输出, 给这个文件产出结构化批注。",
@@ -728,8 +744,10 @@ export function buildCodeExplainPrompt(input: {
   if (hasCode) {
     parts.push(
       `源码总行数: ${totalLines} (1-based; 锚定时严禁超过此行号)`,
+      "**每行已用 `<行号> | <代码>` 前缀标好行号**: 你在 JSON 里写 line / startLine / endLine 时,",
+      "**直接抄这一行最左边那个数字**, 不要自己数, 不要凭感觉估。",
       "----- BEGIN CODE -----",
-      input.fileCode,
+      numberedCode,
       "----- END CODE -----",
     );
   } else {

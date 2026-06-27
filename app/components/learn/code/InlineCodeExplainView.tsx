@@ -269,21 +269,25 @@ export function InlineCodeExplainView({
                 </div>
               </div>
 
-              {/* 行内旁批 (// 风格, 浅色, 小字号) */}
+              {/* 行内旁批 (// 风格, 浅色, 小字号)
+                  视觉绑定: 行号列显示 └─ 连接符, 浅色背景跟纯代码区分开, 让用户一眼看出
+                  "这条是上一行代码的旁批", 不会跟代码本身混淆。`//` 前缀**不加** select-none
+                  以便复制粘贴时能带走它。长 note 自动 wrap, 不再 truncate。 */}
               {note && (
-                <div className="flex">
+                <div className="flex bg-[var(--surface-sunken)]/55">
                   <div
-                    className="shrink-0 select-none border-r border-[var(--code-border)] px-3 text-right text-xs text-transparent"
-                    style={{ width: `${GUTTER_WIDTH}px` }}
+                    className="shrink-0 select-none border-r border-[var(--code-border)] px-3 text-right font-mono text-[10px] leading-[1] text-[var(--fg-soft)]/70"
+                    style={{ width: `${GUTTER_WIDTH}px`, paddingTop: 4 }}
                     aria-hidden
                   >
-                    ·
+                    └─
                   </div>
                   <div
-                    className="min-w-0 flex-1 truncate pl-3 pr-4 font-mono text-[12px] italic leading-relaxed text-[var(--fg-soft)]"
+                    className="min-w-0 flex-1 break-words pl-3 pr-4 font-mono text-[12px] italic leading-[1.55] text-[var(--fg-muted)]"
+                    style={{ paddingTop: 2, paddingBottom: 4 }}
                     title={note}
                   >
-                    <span className="select-none opacity-60">// </span>
+                    <span className="mr-1 opacity-60">//</span>
                     {note}
                   </div>
                 </div>
@@ -310,28 +314,31 @@ function BlockNoteCard({ note }: { note: CodeBlockNote }) {
   return (
     <div
       // 缩进到行号列右侧, 视觉上像在代码上批注 (而不是单独一段卡片)。
-      className={`my-2 ml-[68px] mr-3 rounded-r-md ${styles.blockClass} px-3 py-2.5`}
+      // 父容器是 font-mono (代码区), 这里明确切回 sans 让讲解文本不再像代码。
+      className={`my-2 ml-[68px] mr-3 rounded-r-md font-sans ${styles.blockClass} px-3 py-2.5`}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      {/* 标题行: badge + 行号区间 + 加粗标题, 用底部细线跟下方正文分开,
+          让用户一眼区分"这是一段讲解块"而不是"飘进代码流里的几个 <p>" */}
+      <div
+        className="flex flex-wrap items-center gap-2 border-b border-current/15 pb-1.5"
+      >
         <span
           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none ${styles.badgeClass}`}
         >
           {styles.label}
         </span>
-        <span className="shrink-0 font-mono text-[10px] text-[var(--fg-soft)]">
+        <span className="shrink-0 rounded bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--fg-soft)]">
           {rangeLabel(note)}
         </span>
-        <span
-          className={`text-sm font-semibold ${styles.headingClass}`}
-        >
+        <span className={`text-[14px] font-semibold ${styles.headingClass}`}>
           {note.title}
         </span>
       </div>
-      <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--fg-primary)]">
+      <p className="mt-2 text-[13px] leading-relaxed text-[var(--fg-primary)]">
         {note.summary}
       </p>
       {note.why && (
-        <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--fg-muted)]">
+        <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--fg-muted)]">
           <span className="mr-1 font-semibold text-[var(--fg-primary)]">
             为什么:
           </span>
@@ -341,7 +348,7 @@ function BlockNoteCard({ note }: { note: CodeBlockNote }) {
       {note.risk && (
         <div className="mt-2 rounded-sm border-l-2 border-[var(--danger-fg)]/60 bg-[var(--danger-soft)]/40 px-2 py-1 text-[12px] leading-relaxed text-[var(--fg-primary)]">
           <span className="mr-1 font-semibold text-[var(--danger-fg)]">
-            AI 易改坏
+            AI 易改坏:
           </span>
           {note.risk}
         </div>
@@ -349,7 +356,7 @@ function BlockNoteCard({ note }: { note: CodeBlockNote }) {
       {note.suggestion && (
         <div className="mt-2 rounded-sm border-l-2 border-[var(--success-fg)]/60 bg-[var(--success-soft)]/40 px-2 py-1 text-[12px] leading-relaxed text-[var(--fg-primary)]">
           <span className="mr-1 font-semibold text-[var(--success-fg)]">
-            修改建议
+            修改建议:
           </span>
           {note.suggestion}
         </div>
