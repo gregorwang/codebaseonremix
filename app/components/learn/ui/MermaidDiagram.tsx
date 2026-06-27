@@ -4,7 +4,9 @@
  * 客户端渲染 Mermaid 源码 → SVG。
  *
  * 设计要点:
- *  - mermaid 库 ~1MB, 只在浏览器环境用动态 import 拉, 不进 worker bundle, 不阻塞首屏。
+ *  - mermaid 库 ~1MB + elkjs/dagre/katex 共数 MB, **只在浏览器**通过
+ *    `import("./mermaidApi.client")` 拉。`.client.` 后缀让 cloudflare-vite-plugin 把
+ *    它在 SSR 构建里替换成 undefined stub, 所以 mermaid 整包不会跟进 worker bundle。
  *  - 渲染失败 (源码语法错) 不能让卡片整个炸, 退化为「展开看 mermaid 源码」可读 fallback,
  *    用户至少能复制到 https://mermaid.live 自己 debug 或反馈给 AI 重新生成。
  *  - 暗色模式: 通过监听 documentElement.classList ('dark') 切换 mermaid theme, 颜色与全站一致。
@@ -25,35 +27,6 @@ type RenderState =
   | { kind: "ready"; svg: string }
   | { kind: "error"; message: string };
 
-/** 模块级单例: 只 import 一次 mermaid, 后续渲染共用同一个实例。 */
-let mermaidPromise: Promise<typeof import("mermaid")["default"]> | null = null;
-
-async function loadMermaid() {
-  if (!mermaidPromise) {
-    mermaidPromise = import("mermaid").then((mod) => {
-      const mermaid = mod.default;
-      mermaid.initialize({
-        startOnLoad: false,
-        // securityLevel: "strict" 会过滤 HTML 标签, 防止 AI 输出里夹 <script> 之类。
-        securityLevel: "strict",
-        // 默认情况下 mermaid.render 解析失败时会往 <body> 追加一张「炸弹」错误 SVG,
-        // 飘在页面最下方。我们自己有 fallback 卡片 (展开看源码), 不需要它那张图,
-        // 所以关掉, 避免页面底部出现孤立的 "Syntax error in text" 炸弹。
-        suppressErrorRendering: true,
-        theme: detectTheme(),
-        fontFamily: "inherit",
-      });
-      return mermaid;
-    });
-  }
-  return mermaidPromise;
-}
-
-function detectTheme(): "default" | "dark" {
-  if (typeof document === "undefined") return "default";
-  return document.documentElement.classList.contains("dark") ? "dark" : "default";
-}
-
 export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
   const reactId = useId();
   // mermaid 要求 id 不含冒号; React 17+ 的 useId 会带 :r0:, 替换掉。
@@ -71,7 +44,13 @@ export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
 
     (async () => {
       try {
-        const mermaid = await loadMermaid();
+        // SSR 下这个 import 会被 vite 替换成 stub (loadMermaid: undefined),
+        // 但 useEffect 在服务端从不执行, 永远走不到这里。
+        const api = await import("./mermaidApi.client");
+        if (typeof api.loadMermaid !== "function") {
+          throw new Error("Mermaid 加载器在服务端被禁用 (.client stub)");
+        }
+        const mermaid = await api.loadMermaid();
         if (cancelled) return;
         renderCountRef.current += 1;
         const id = `${baseId}-${renderCountRef.current}`;

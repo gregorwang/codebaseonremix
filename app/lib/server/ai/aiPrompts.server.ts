@@ -604,6 +604,158 @@ export function buildCodeOrientationPrompt(input: {
 }
 
 /* ------------------------------------------------------------------
+ * 结构化「代码批注」prompt (给 CodeExplainView 用)。
+ *
+ * 与上面两个 markdown 输出的 prompt 是平行链路: 同样的输入 (源码 + 关卡 + 可选答题),
+ * 但要求 AI 输出严格的 JSON 结构, 让前端能渲染成「老师旁批注」式卡片, 而不是
+ * markdown 长文。两个 stage:
+ *  - "orientation": 答题前, 中性导读, 不暗示题目答案。
+ *  - "explanation": 答题后, 结合用户作答给针对性批注 (答错纠正 / 答对加深)。
+ *
+ * 故意写一份独立 system prompt: markdown 那两个 prompt 的"用 ### 写"约束跟
+ * 结构化 JSON 完全相反, 借用过来会污染输出格式。
+ * ------------------------------------------------------------------ */
+
+const CODE_EXPLAIN_JSON_CONTRACT = `## 输出格式 (硬性, 不允许偏离)
+
+只输出**一个合法 JSON 对象**, 不要 markdown 围栏, 不要前缀解释文字, 不要尾巴注释。
+最外层结构必须严格如下 (字段名一律小写驼峰):
+
+{
+  "summary": "一句话总览这段代码在系统里的角色 (≤ 60 字, 可空字符串)。",
+  "annotations": [
+    {
+      "id": "kebab-case 短 id, 在本次输出里唯一",
+      "startLine": 1,
+      "endLine": 1,
+      "title": "≤ 16 字, 这段代码的角色",
+      "level": "basic" | "important" | "risk" | "suggestion",
+      "summary": "一句话简介 (≤ 60 字)",
+      "details": "2~4 句详情, 说清楚因果 / 边界 / 给下一步交付了什么",
+      "risk": "可选, 这段代码常见的改坏陷阱 (≤ 80 字)",
+      "suggestion": "可选, 怎么改更稳 (≤ 80 字)"
+    }
+  ]
+}
+
+## 内容规则
+
+- 行号 1-based, 对应输入里给的源码整体行号 (输入会告诉你文件总行数)。**严禁**超过文件总行数。
+- annotations 数量在 **3 ~ 8** 条之间, 按 startLine 升序。不要为了凑数把同一段切碎。
+- level 选取:
+  - **basic**: 普通说明, 帮助新人理解角色。
+  - **important**: 这段是这个文件的关键因果点, 漏看会读不懂全局。
+  - **risk**: 这里有实际风险 (缓存不刷新 / 守门顺序错 / 越权 / 状态作用域错)。
+  - **suggestion**: 有可操作的修改建议 (一般跟 risk 配对出现)。
+- **必须**引用真实的函数名 / 字段名 / 路径; 禁止编造不存在的标识符。
+- 禁止泛讲语法 ("useEffect 是 React hook" 这种)。
+- 禁止 "非常重要 / 核心 / 关键所在 / 至关重要" 这种废话词。
+- 严禁在任何字段里出现真实密钥 / token 字面值 (\`sk-...\`, \`api_key=...\` 一律不要回显)。
+- details 必须把"这段在干嘛 → 给下一步交付了什么 → AI 改这里最容易改坏什么"讲透,
+  不许只剩半句话。
+`;
+
+const CODE_EXPLAIN_ORIENTATION_SYSTEM = `你是 Code Coach 的中文教学 AI。Code Coach 训练的是「能读懂 AI 生成代码因果链」的工程师。
+
+你会拿到一个源码文件的完整代码。你的任务是做「读前导读」, 把它拆成 3~8 条**结构化批注**, 帮学习者快速建立这个文件的因果地图: 角色边界、请求/事件流向、关键代码段各自在干嘛、AI 来改这里最容易改坏什么。
+
+**重要**: 这是答题前的导读, 你此时看不到题目, 也严禁泄露或暗示任何题目答案。中性地讲代码本身。
+
+${CODE_EXPLAIN_JSON_CONTRACT}`;
+
+const CODE_EXPLAIN_AFTER_ANSWER_SYSTEM = `你是 Code Coach 的中文教学 AI。Code Coach 训练的是「能读懂 AI 生成代码因果链」的工程师。
+
+你会拿到一个源码文件的完整代码、一道题、用户的作答、以及正确答案。请**结合用户的作答**, 把讲解锚定到真正相关的代码段, 拆成 3~8 条**结构化批注**:
+- 用户答错: 指出他的理解偏在哪, 用代码的哪几段能纠正这个误解 (一般至少 1 条 level=risk)。
+- 用户答对: 确认对在哪, 再顺着代码加深一层 (边界条件 / 相邻陷阱 / AI 易改坏处)。
+
+聚焦这道题涉及的因果, 不要泛讲语法, 不要重新输出完整代码方案。
+
+${CODE_EXPLAIN_JSON_CONTRACT}`;
+
+/** 给 generateCodeExplain 用的 prompt builder。 */
+export function buildCodeExplainPrompt(input: {
+  stage: "orientation" | "explanation";
+  lessonTitle: string;
+  lessonFocus: string;
+  abilityTags: string[];
+  filePath: string;
+  fileCode: string;
+  /** stage === "explanation" 时填: 题面 + 用户作答 + 正确答案 + 错点类型。 */
+  questionContext?: {
+    title: string;
+    prompt: string;
+    questionType: string;
+    userAnswerJson: string;
+    correctAnswerJson: string;
+    baseExplanation?: string;
+    mistakeType?: string;
+  };
+}): { systemPrompt: string; prompt: string; promptType: string } {
+  const hasCode = input.fileCode.trim().length > 0;
+  const totalLines = hasCode ? input.fileCode.split(/\r?\n/).length : 0;
+
+  const parts: string[] = [
+    "请按 system 要求的 JSON 输出, 给这个文件产出结构化批注。",
+    "",
+    "## 关卡",
+    `title: ${input.lessonTitle}`,
+    `focus: ${input.lessonFocus}`,
+    `abilityTags: ${input.abilityTags.join(", ")}`,
+    "",
+    "## 锚点文件",
+    `path: ${input.filePath}`,
+  ];
+
+  if (hasCode) {
+    parts.push(
+      `源码总行数: ${totalLines} (1-based; 锚定时严禁超过此行号)`,
+      "----- BEGIN CODE -----",
+      input.fileCode,
+      "----- END CODE -----",
+    );
+  } else {
+    parts.push("(本课暂无可用源码, 只能基于元信息批注。请退化为 0 条批注并在 summary 里说明。)");
+  }
+
+  if (input.stage === "explanation" && input.questionContext) {
+    const q = input.questionContext;
+    parts.push(
+      "",
+      "## 用户已作答的题目",
+      `questionTitle: ${q.title}`,
+      `questionType: ${q.questionType}`,
+      `prompt: ${q.prompt}`,
+      `userAnswer (JSON): ${q.userAnswerJson}`,
+      `correctAnswer (JSON): ${q.correctAnswerJson}`,
+      q.baseExplanation ? `baseExplanation: ${q.baseExplanation}` : "",
+      q.mistakeType ? `mistakeType: ${q.mistakeType}` : "",
+      "请把批注锚定到这道题真正涉及的代码段, 不要为了讲透文件而忽略题目。",
+    );
+  } else {
+    parts.push(
+      "",
+      "## 注意",
+      "这是答题前的中性导读, 严禁透露 / 暗示任何题目答案; 只讲代码因果。",
+    );
+  }
+
+  parts.push("", "按 system 的 JSON 契约直接输出, 不要任何额外文字。");
+
+  return {
+    systemPrompt:
+      input.stage === "explanation"
+        ? CODE_EXPLAIN_AFTER_ANSWER_SYSTEM
+        : CODE_EXPLAIN_ORIENTATION_SYSTEM,
+    prompt: parts.filter(Boolean).join("\n"),
+    promptType:
+      input.stage === "explanation"
+        ? "code_explain_after_answer"
+        : "code_explain_orientation",
+  };
+}
+
+/* ------------------------------------------------------------------
  * 课级"AI 知识点讲解"(markdown)。供 TeachingPhase 的预习卡使用 —— 与上面的
  * 行锚定导读(buildCodeOrientationPrompt)是两条独立链路, 互不影响。
  * ------------------------------------------------------------------ */

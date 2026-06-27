@@ -16,6 +16,7 @@ export type AiFeature =
   | "snippet_explain"
   | "lesson_teaching"
   | "code_orientation"
+  | "code_explain"
   | "lesson_diagram"
   | "question_diagram";
 

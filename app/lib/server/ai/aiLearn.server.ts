@@ -16,7 +16,11 @@ import type { AbilityTag } from "~/lib/learn/abilityTags";
 import { parseJsonField } from "../learn/db-json.server";
 import { getUserAttempts } from "../learn/attempts.server";
 import { createValidatedAiDraft, AiDraftValidationError } from "../learn/aiDrafts.server";
-import { validateQuestionBankShape } from "./aiSchemas.server";
+import {
+  validateQuestionBankShape,
+  parseStructuredCodeExplain,
+  type StructuredCodeExplain,
+} from "./aiSchemas.server";
 import {
   AiGatewayError,
   callAiGateway,
@@ -34,6 +38,7 @@ import {
   buildCodeOrientationPrompt,
   buildLessonDiagramPrompt,
   buildQuestionDiagramPrompt,
+  buildCodeExplainPrompt,
 } from "./aiPrompts.server";
 // Rate limiting was removed: the only meaningful cost gate is the AI Gateway
 // quota itself, which Cloudflare enforces upstream. The previous per-user
@@ -738,6 +743,109 @@ export async function generateCodeOrientation(
 
   // v3: AI 直接产 markdown 成品。
   return result;
+}
+
+/* ----------------------------------------------------------------
+ * generateCodeExplain — 新版「老师旁批注」结构化讲解。
+ *
+ * 与 generateCodeOrientation / generateExplanation 平行: 同样的源码 + 关卡上下文
+ * (explanation stage 还会带上题目 + 用户作答), 但要求 AI 输出严格 JSON 结构,
+ * 解析后给 CodeExplainView 渲染成卡片化批注, 不走 markdown。
+ *
+ * 两个 stage:
+ *  - orientation: 答题前导读, 中性不剧透。无 attempt 强制。
+ *  - explanation: 答题后讲解, 结合用户作答; 必须先提交过 (复用 assertAttemptExists)。
+ *
+ * 返回:
+ *   - AiLearnResult: 原始 JSON 字符串 (供 KV 缓存 + 日志)
+ *   - parsed: 解析后的结构化批注 (供路由直接 spread 到响应)
+ * ---------------------------------------------------------------- */
+
+export type GenerateCodeExplainInput = {
+  userId: string;
+  stage: "orientation" | "explanation";
+  lessonTitle: string;
+  lessonFocus: string;
+  abilityTags: string[];
+  filePath: string;
+  fileCode: string;
+  fileLineCount: number;
+  /** stage === "explanation" 时必填。 */
+  questionContext?: {
+    questionId: string;
+    title: string;
+    prompt: string;
+    questionType: string;
+    userAnswerJson: string;
+    correctAnswerJson: string;
+    baseExplanation?: string;
+    mistakeType?: string;
+  };
+};
+
+export async function generateCodeExplain(
+  db: D1Database,
+  env: Env,
+  input: GenerateCodeExplainInput,
+  ctx?: ExecutionContext,
+): Promise<AiLearnResult & { parsed: StructuredCodeExplain }> {
+  // explanation stage 守门: 必须先有 attempt, 不允许"没答就要批注"绕过 orientation。
+  if (input.stage === "explanation") {
+    if (!input.questionContext) {
+      throw new Error("explanation 阶段需要 questionContext");
+    }
+    await assertAttemptExists(db, input.userId, input.questionContext.questionId);
+  }
+
+  const built = buildCodeExplainPrompt({
+    stage: input.stage,
+    lessonTitle: input.lessonTitle,
+    lessonFocus: input.lessonFocus,
+    abilityTags: input.abilityTags,
+    filePath: input.filePath,
+    fileCode: input.fileCode,
+    questionContext: input.questionContext
+      ? {
+          title: input.questionContext.title,
+          prompt: input.questionContext.prompt,
+          questionType: input.questionContext.questionType,
+          userAnswerJson: input.questionContext.userAnswerJson,
+          correctAnswerJson: input.questionContext.correctAnswerJson,
+          baseExplanation: input.questionContext.baseExplanation,
+          mistakeType: input.questionContext.mistakeType,
+        }
+      : undefined,
+  });
+
+  const result = await runAiFeature(db, env, {
+    userId: input.userId,
+    feature: "code_explain",
+    questionId: input.questionContext?.questionId,
+    promptType: built.promptType,
+    systemPrompt: built.systemPrompt,
+    prompt: built.prompt,
+    input: { filePath: input.filePath, stage: input.stage },
+    executionCtx: ctx,
+  });
+
+  let parsed: StructuredCodeExplain;
+  try {
+    parsed = parseStructuredCodeExplain(
+      result.text,
+      input.fileLineCount,
+      input.filePath,
+    );
+  } catch (err) {
+    // AI 输出不是合法 JSON / 没有有效批注: 抛 Error 让上层 toAiLearnError 抓住,
+    // 路由层会返回 ai_failed, 前端弹"重新生成"。
+    throw new Error(
+      err instanceof Error
+        ? `AI 返回结构无法解析: ${err.message}`
+        : "AI 返回结构无法解析",
+    );
+  }
+
+  return { ...result, parsed };
 }
 
 /* ----------------------------------------------------------------

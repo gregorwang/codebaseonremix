@@ -33,6 +33,21 @@ export const LEARN_CACHE_KEYS = {
    */
   aiExplanation: (questionId: string, answerHash: string) =>
     learnCacheKey("question", questionId, "ai-explanation", answerHash),
+  /**
+   * 新版「结构化代码批注」缓存 (CodeExplainView 用)。
+   * - orientation: 与 questionId 无关, 按文件路径全局共享。
+   * - explanation: 按 (questionId, answerHash) 缓存, 不写入用户身份。
+   * 与 codeOrientation / aiExplanation 是两条独立链路, 互不污染缓存。
+   */
+  codeExplainOrientation: (filePath: string) =>
+    learnCacheKey("code-explain", "orientation", filePath),
+  codeExplainAfterAnswer: (questionId: string, answerHash: string) =>
+    learnCacheKey(
+      "code-explain",
+      "after-answer",
+      questionId,
+      answerHash,
+    ),
 } as const;
 
 export const AI_TEACHING_TTL_SECONDS = 60 * 60 * 24 * 7;

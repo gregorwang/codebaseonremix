@@ -15,10 +15,6 @@ export default [
       route("ability-map", "routes/learn.ability-map.tsx"),
       route("account", "routes/learn.account.tsx"),
       route("source", "routes/learn.source.tsx"),
-      route(
-        "code-explain-demo",
-        "routes/learn.code-explain-demo.tsx",
-      ),
       route("exams", "routes/learn.exams._index.tsx"),
       route("exams/:examSlug", "routes/learn.exams.$examSlug.tsx"),
       route("snippets", "routes/learn.snippets._index.tsx"),

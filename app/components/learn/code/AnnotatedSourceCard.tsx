@@ -1,18 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import type { QuestionType } from "~/lib/learn/types";
-import { AiMarkdown } from "~/components/learn/ui/AiMarkdown";
+import type { CodeAnnotation } from "~/lib/learn/codeExplainTypes";
+import { CodeExplainView } from "~/components/learn/code/CodeExplainView";
 
 /**
- * v3 数据形态: AI 直接返一整段 markdown 成品(含 ```代码块``` + 讲解),
- * 前端用 AiMarkdown 整块渲染。前端不再做"按行号插注释"那种二次拼装,
- * 也不再单独 GET /learn/source —— 全文是后端从 D1 取了塞进 AI prompt 的。
+ * 「代码 + AI 讲解」卡片 (v4 结构化批注版)。
+ *
+ * v3 是 AI 直接返一整段 markdown 成品, 前端用 AiMarkdown 整块渲染 ——
+ * 看起来像聊天记录, 行号信息和代码段的关联都丢了。
+ *
+ * v4 改成: AI 返结构化批注 JSON, 路由层把源码全文也一起塞回来,
+ * 前端用 CodeExplainView 渲染成「左源码 + 右批注卡片」的老师旁批形态。
+ *
+ * 两个 stage:
+ *  - "orientation" (未提交本题): 中性导读, 不剧透答案。
+ *  - "explanation" (已提交本题): 结合作答, 给针对性批注。
+ *
+ * 缓存逻辑保留: 切回某文件不重拉; 用户点「重新生成」走 force=1 跳过 KV。
  */
-type AnnoData =
+type CodeExplainData =
   | {
       ok: true;
-      feature: "code_orientation" | "explanation";
-      markdown: string;
+      feature: "code_explain";
+      stage: "orientation" | "explanation";
+      filePath: string;
+      language: string | null;
+      code: string;
+      summary: string;
+      annotations: CodeAnnotation[];
       fromCache?: boolean;
     }
   | { ok: false; error: string; code?: string };
@@ -21,13 +37,22 @@ type AnnotatedSourceCardProps = {
   /** 本题相关的源码文件(相对 remix 路径), 第一个为默认激活。空数组表示无源码。 */
   files: string[];
   questionId: string;
+  /** 仅做日志/未来扩展, v4 不再依赖 questionType (上一版传给 markdown 渲染时用过)。 */
   questionType: QuestionType;
-  /** 是否已提交本题(决定导读 vs 结合答案讲解)。 */
+  /** 是否已提交本题(决定 orientation vs explanation)。 */
   answered: boolean;
 };
 
 const sparkle = (
-  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    className="h-4 w-4"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z" />
   </svg>
 );
@@ -42,57 +67,66 @@ function isDirectoryPath(path: string): boolean {
   return path.endsWith("/");
 }
 
+type CachedPayload = {
+  code: string;
+  language: string | null;
+  filePath: string;
+  summary: string;
+  annotations: CodeAnnotation[];
+};
+
 export function AnnotatedSourceCard({
   files,
   questionId,
-  questionType,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  questionType: _questionType,
   answered,
 }: AnnotatedSourceCardProps) {
-  const annoFetcher = useFetcher<AnnoData>();
+  const annoFetcher = useFetcher<CodeExplainData>();
 
   // 只把"看起来是文件"的路径放入 Tab; 目录型路径不进 Tab。
   const fileTabs = files.filter((f) => !isDirectoryPath(f));
   const directoryHints = files.filter(isDirectoryPath);
 
   const [activeFile, setActiveFile] = useState<string | null>(fileTabs[0] ?? null);
-  // markdown 缓存: key = `${stage}:${path}`, 切回不重拉。
-  const [mdCache, setMdCache] = useState<Record<string, string>>({});
+  // 已生成的批注缓存: key = `${stage}:${path}`, 切回不重拉。
+  const [cache, setCache] = useState<Record<string, CachedPayload>>({});
   // 已发起过的请求 key(去重)。
   const requestedRef = useRef<Set<string>>(new Set());
   // 当前在途请求归属的 cacheKey(响应回来时写到这里)。
   const pendingKeyRef = useRef<string | null>(null);
 
-  const stage = answered ? "explanation" : "orientation";
+  const stage: "orientation" | "explanation" = answered
+    ? "explanation"
+    : "orientation";
 
   // 题目切换: 重置激活文件 + 清空缓存。
   useEffect(() => {
     setActiveFile(fileTabs[0] ?? null);
-    setMdCache({});
+    setCache({});
     requestedRef.current = new Set();
     pendingKeyRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questionId, files.join("|")]);
 
   const cacheKey = activeFile ? `${stage}:${activeFile}` : null;
-  const markdown = cacheKey ? (mdCache[cacheKey] ?? null) : null;
+  const payload = cacheKey ? cache[cacheKey] ?? null : null;
 
-  // 拉讲解: 未提交→导读; 已提交→结合答案讲解。按 (stage, file) 缓存 + 去重。
+  // 拉批注: 未提交→orientation; 已提交→explanation。按 (stage, file) 缓存 + 去重。
   useEffect(() => {
     if (!activeFile || !cacheKey) return;
-    if (mdCache[cacheKey] || requestedRef.current.has(cacheKey)) return;
+    if (cache[cacheKey] || requestedRef.current.has(cacheKey)) return;
     requestedRef.current.add(cacheKey);
     pendingKeyRef.current = cacheKey;
-    if (stage === "orientation") {
-      annoFetcher.submit(
-        { intent: "ai_orientation", path: activeFile },
-        { method: "post" },
-      );
-    } else {
-      annoFetcher.submit(
-        { intent: "ai_explanation", questionId, questionType, path: activeFile },
-        { method: "post" },
-      );
-    }
+    annoFetcher.submit(
+      {
+        intent: "ai_code_explain",
+        stage,
+        path: activeFile,
+        questionId,
+      },
+      { method: "post" },
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFile, cacheKey, stage]);
 
@@ -102,7 +136,16 @@ export function AnnotatedSourceCard({
     const d = annoFetcher.data;
     const key = pendingKeyRef.current;
     if (d?.ok && key) {
-      setMdCache((prev) => ({ ...prev, [key]: d.markdown }));
+      setCache((prev) => ({
+        ...prev,
+        [key]: {
+          code: d.code,
+          language: d.language,
+          filePath: d.filePath,
+          summary: d.summary,
+          annotations: d.annotations,
+        },
+      }));
       pendingKeyRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -114,7 +157,7 @@ export function AnnotatedSourceCard({
   function regenerate() {
     if (!activeFile || !cacheKey) return;
     // 清掉本 key 的缓存与去重标记, 强制重拉。
-    setMdCache((prev) => {
+    setCache((prev) => {
       const next = { ...prev };
       delete next[cacheKey];
       return next;
@@ -122,17 +165,16 @@ export function AnnotatedSourceCard({
     requestedRef.current.delete(cacheKey);
     requestedRef.current.add(cacheKey);
     pendingKeyRef.current = cacheKey;
-    if (stage === "orientation") {
-      annoFetcher.submit(
-        { intent: "ai_orientation", path: activeFile, force: "1" },
-        { method: "post" },
-      );
-    } else {
-      annoFetcher.submit(
-        { intent: "ai_explanation", questionId, questionType, path: activeFile },
-        { method: "post" },
-      );
-    }
+    annoFetcher.submit(
+      {
+        intent: "ai_code_explain",
+        stage,
+        path: activeFile,
+        questionId,
+        force: "1",
+      },
+      { method: "post" },
+    );
   }
 
   // 卡顶部 path 提示用的 active file 显示名。
@@ -146,12 +188,15 @@ export function AnnotatedSourceCard({
     <section className="studio-card overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-[var(--brand-fg)]" aria-hidden>{sparkle}</span>
+          <span className="text-[var(--brand-fg)]" aria-hidden>
+            {sparkle}
+          </span>
           <h3 className="truncate text-sm font-semibold text-[var(--fg-primary)]">
             代码 + AI 讲解
             <span className="ml-2 text-xs font-normal text-[var(--fg-soft)]">
               {answered ? "结合你的答案" : "读前导读"}
               {loading && " · 生成中…"}
+              {payload && ` · ${payload.annotations.length} 条批注`}
             </span>
           </h3>
         </div>
@@ -195,27 +240,47 @@ export function AnnotatedSourceCard({
         </p>
       )}
 
-      <div className="max-h-[70vh] overflow-y-auto p-4">
+      {/* 顶部一句话总览(AI 给的 summary) */}
+      {payload?.summary && (
+        <p className="border-b border-[var(--border-subtle)] bg-[var(--surface-sunken)]/30 px-4 py-2 text-[13px] leading-relaxed text-[var(--fg-primary)]">
+          {payload.summary}
+        </p>
+      )}
+
+      <div className="p-3 md:p-4">
         {fileTabs.length === 0 && directoryHints.length === 0 ? (
-          <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">本题暂无关联源码文件。</p>
+          <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">
+            本题暂无关联源码文件。
+          </p>
         ) : fileTabs.length === 0 && directoryHints.length > 0 ? (
           // 纯目录型: 没有可拉全文的文件, 提示用户这是目录评审题
           <div className="space-y-3 rounded-xl border border-dashed border-[var(--border-subtle)] bg-[var(--surface-sunken)]/40 p-4 text-sm text-[var(--fg-muted)]">
             <p>
-              本题的关注范围是整个目录 <code className="rounded bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-xs">{directoryHints[0]}</code>，没有单一源码文件可以展示全文。
+              本题的关注范围是整个目录{" "}
+              <code className="rounded bg-[var(--surface-raised)] px-1.5 py-0.5 font-mono text-xs">
+                {directoryHints[0]}
+              </code>
+              , 没有单一源码文件可以展示全文。
             </p>
-            <p>请结合下方"题目"卡里的代码片段作答；提交后这里会出现"结合你的答案"的目录评审讲解。</p>
+            <p>
+              请结合下方"题目"卡里的代码片段作答; 提交后这里会出现"结合你的答案"的目录评审批注。
+            </p>
           </div>
-        ) : !markdown && loading ? (
+        ) : !payload && loading ? (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">AI 生成中…</p>
-        ) : markdown ? (
-          <AiMarkdown text={markdown} />
+        ) : payload ? (
+          <CodeExplainView
+            filePath={payload.filePath}
+            language={payload.language ?? undefined}
+            code={payload.code}
+            annotations={payload.annotations}
+          />
         ) : (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">
             {error?.error ?? "等待 AI 讲解…"}
           </p>
         )}
-        {error && markdown && (
+        {error && payload && (
           <p className="mt-2 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger-fg)]">
             {error.error}
           </p>

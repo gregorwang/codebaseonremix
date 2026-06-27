@@ -195,6 +195,150 @@ export function parseAnnotatedExplanation(
   return { summary, annotations };
 }
 
+/* ----------------------------------------------------------------
+ * 新版「结构化代码批注」解析
+ *
+ * 给 CodeExplainView 用。AI 输出 JSON:
+ *   {
+ *     summary: "一句话总览",
+ *     annotations: [
+ *       { id, startLine, endLine, title, level, summary, details, risk?, suggestion? },
+ *       ...
+ *     ]
+ *   }
+ *
+ * 与上面 parseAnnotatedExplanation (note/placement) 是两套独立 schema, 互不污染。
+ * 旧的给行内/块下/高亮三态注释用; 新的给「老师旁批注」结构化卡片用。
+ * ---------------------------------------------------------------- */
+
+const CODE_EXPLAIN_LEVELS = new Set(["basic", "important", "risk", "suggestion"]);
+
+export type StructuredCodeAnnotation = {
+  id: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  title: string;
+  level: "basic" | "important" | "risk" | "suggestion";
+  summary: string;
+  details: string;
+  risk?: string;
+  suggestion?: string;
+};
+
+export type StructuredCodeExplain = {
+  summary: string;
+  annotations: StructuredCodeAnnotation[];
+};
+
+/** 把不安全 / 空白 / 太短的字符串裁干净, 提取出真正可展示的内容。 */
+function cleanText(v: unknown, maxLen = 800): string | "" {
+  if (!hasNonEmptyString(v)) return "";
+  let s = v.trim();
+  if (containsHardSecret(s)) return "";
+  if (s.length > maxLen) s = s.slice(0, maxLen).trimEnd() + "…";
+  return s;
+}
+
+/**
+ * 解析 AI 返回的结构化代码批注 JSON。容错重点:
+ *  - 剥掉 ```json ... ``` 围栏;
+ *  - 行号夹紧到 [1, fileLineCount], endLine >= startLine, 非法整条丢弃;
+ *  - level 不在白名单时强制改为 "basic";
+ *  - 任何字段含硬凭证特征(sk-..., api_key=... 等)的整条丢弃;
+ *  - id 缺失或重复时, 用 a${index} 兜底;
+ *  - title / summary 任一缺失即丢弃(没有标题 + 简介就根本不是一条可展示的批注)。
+ * 完全没有有效批注时抛错, 让上层拿到失败标记重试或回退。
+ */
+export function parseStructuredCodeExplain(
+  rawText: string,
+  fileLineCount: number,
+  filePath: string,
+): StructuredCodeExplain {
+  const cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  let data: unknown;
+  try {
+    data = JSON.parse(cleaned);
+  } catch {
+    throw new Error("AI 返回的不是合法 JSON");
+  }
+  if (!isRecord(data)) {
+    throw new Error("AI 返回结构非对象");
+  }
+
+  const lineCap =
+    Number.isFinite(fileLineCount) && fileLineCount > 0
+      ? Math.floor(fileLineCount)
+      : 1;
+
+  const overallSummary = cleanText(data.summary, 200);
+  const rawAnnotations = Array.isArray(data.annotations) ? data.annotations : [];
+
+  const usedIds = new Set<string>();
+  const annotations: StructuredCodeAnnotation[] = [];
+
+  rawAnnotations.forEach((item: unknown, idx: number) => {
+    if (!isRecord(item)) return;
+
+    const title = cleanText(item.title, 80);
+    const summary = cleanText(item.summary, 200);
+    if (!title || !summary) return;
+
+    const details = cleanText(item.details, 800);
+
+    const startRaw = Number(item.startLine);
+    if (!Number.isFinite(startRaw)) return;
+    const start = Math.max(1, Math.min(Math.floor(startRaw), lineCap));
+
+    const endRaw = Number(item.endLine ?? item.startLine);
+    let end = Number.isFinite(endRaw)
+      ? Math.max(1, Math.min(Math.floor(endRaw), lineCap))
+      : start;
+    if (end < start) end = start;
+
+    const lvlRaw = typeof item.level === "string" ? item.level.trim() : "";
+    const level = (
+      CODE_EXPLAIN_LEVELS.has(lvlRaw) ? lvlRaw : "basic"
+    ) as StructuredCodeAnnotation["level"];
+
+    // id 兜底: AI 给的 id 若空 / 重复 / 不是字符串, 都用 a${idx}。
+    let id = typeof item.id === "string" ? item.id.trim() : "";
+    if (!id || usedIds.has(id)) id = `a${idx}`;
+    usedIds.add(id);
+
+    const risk = cleanText(item.risk, 400);
+    const suggestion = cleanText(item.suggestion, 400);
+
+    const ann: StructuredCodeAnnotation = {
+      id,
+      filePath,
+      startLine: start,
+      endLine: end,
+      title,
+      level,
+      summary,
+      details: details || summary, // details 缺失就回填 summary, 不让卡片空一块
+    };
+    if (risk) ann.risk = risk;
+    if (suggestion) ann.suggestion = suggestion;
+    annotations.push(ann);
+  });
+
+  annotations.sort((a, b) => a.startLine - b.startLine);
+
+  if (annotations.length === 0) {
+    throw new Error("AI 未产出有效批注");
+  }
+
+  return { summary: overallSummary, annotations };
+}
+
+
 export function validateAiSecurityContent(text: string): AiValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];

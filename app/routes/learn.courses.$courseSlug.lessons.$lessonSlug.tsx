@@ -9,6 +9,7 @@ import {
   generateLessonDiagram,
   generateQuestionDiagram,
   generateCodeOrientation,
+  generateCodeExplain,
   parseAttemptUserAnswer,
   toAiLearnError,
 } from "~/lib/server/ai/aiLearn.server";
@@ -359,6 +360,196 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           ok: true as const,
           feature: "code_orientation" as const,
           markdown: result.text,
+          fromCache: false,
+        },
+        responseHeadersEarly,
+      );
+    } catch (error) {
+      const aiError = toAiLearnError(error);
+      return data(
+        { ok: false as const, error: aiError.message, code: aiError.code },
+        responseHeadersEarly,
+      );
+    }
+  }
+
+  /* ---------- 新版「结构化代码批注」(CodeExplainView 用, 两个 stage) ---------- */
+  if (intent === "ai_code_explain") {
+    const stageRaw = String(formData.get("stage") ?? "");
+    const stage: "orientation" | "explanation" =
+      stageRaw === "explanation" ? "explanation" : "orientation";
+    const path = String(formData.get("path") ?? "").trim();
+    if (!path) {
+      return data(
+        { ok: false as const, error: "缺少文件路径", code: "ai_failed" as const },
+        responseHeadersEarly,
+      );
+    }
+
+    const structure = await getCourseStructure(db, params.courseSlug!, cache);
+    if (!structure) throw data("课程不存在", { status: 404 });
+    const lesson = structure.lessons.find((item) => item.slug === params.lessonSlug);
+    if (!lesson) throw data("关卡不存在", { status: 404 });
+
+    const force = formData.get("force") === "1";
+    const questionIdForExplain = String(formData.get("questionId") ?? "").trim();
+
+    // 安全: 只允许加载本课/本题真正相关的文件 (与 ai_hint/ai_explanation 同款白名单)。
+    let question: Awaited<ReturnType<typeof getQuestionById>> | null = null;
+    const allowedFilePaths = new Set<string>();
+    if (lesson.sourceFilePath) allowedFilePaths.add(lesson.sourceFilePath);
+    if (stage === "explanation" && questionIdForExplain) {
+      question = await getQuestionById(db, questionIdForExplain);
+      if (!question || question.lessonId !== lesson.id) {
+        return data(
+          { ok: false as const, error: "题目不存在", code: "ai_failed" as const },
+          responseHeadersEarly,
+        );
+      }
+      if (question.sourceFilePath) allowedFilePaths.add(question.sourceFilePath);
+      for (const p of question.touchedFiles ?? []) allowedFilePaths.add(p);
+    }
+    if (!allowedFilePaths.has(path)) {
+      return data(
+        {
+          ok: false as const,
+          error: "该文件不在本题/本课的关联范围内",
+          code: "ai_failed" as const,
+        },
+        responseHeadersEarly,
+      );
+    }
+
+    const sourceFile = await getSourceFileContent(db, path);
+    if (!sourceFile) {
+      return data(
+        { ok: false as const, error: "该文件未收录源码", code: "ai_failed" as const },
+        responseHeadersEarly,
+      );
+    }
+
+    // 缓存 key: orientation 按文件路径; explanation 按 (questionId, answerHash)。
+    let cacheKey: string;
+    if (stage === "explanation") {
+      // 必须先有 attempt; explanation 阶段拿最近一次作答算 hash。
+      const attempts = await getUserAttempts(db, userId, {
+        questionId: questionIdForExplain,
+        limit: 1,
+      });
+      const latestAttempt = attempts[0];
+      if (!latestAttempt) {
+        return data(
+          {
+            ok: false as const,
+            error: "请先提交答案后再使用 AI 讲解。",
+            code: "forbidden" as const,
+          },
+          responseHeadersEarly,
+        );
+      }
+      const userAnswerFromAttempt = parseAttemptUserAnswer(latestAttempt);
+      const answerHash = await sha1Hex8(
+        JSON.stringify({ a: userAnswerFromAttempt ?? null, p: path }),
+      );
+      cacheKey = LEARN_CACHE_KEYS.codeExplainAfterAnswer(
+        questionIdForExplain,
+        answerHash,
+      );
+    } else {
+      cacheKey = LEARN_CACHE_KEYS.codeExplainOrientation(path);
+    }
+
+    // KV 命中: 直接 parse 返回, 不再调 AI。
+    if (!force && cache) {
+      const cached = await cache.get(cacheKey);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached) as {
+            summary: string;
+            annotations: unknown[];
+          };
+          return data(
+            {
+              ok: true as const,
+              feature: "code_explain" as const,
+              stage,
+              filePath: sourceFile.path,
+              language: sourceFile.language ?? null,
+              code: sourceFile.code,
+              summary: parsed.summary ?? "",
+              annotations: parsed.annotations ?? [],
+              fromCache: true,
+            },
+            responseHeadersEarly,
+          );
+        } catch {
+          // 缓存被脏数据污染, 落入重新生成流程。
+        }
+      }
+    }
+
+    try {
+      let questionContext:
+        | Parameters<typeof generateCodeExplain>[2]["questionContext"]
+        | undefined;
+      if (stage === "explanation" && question) {
+        const attempts = await getUserAttempts(db, userId, {
+          questionId: questionIdForExplain,
+          limit: 1,
+        });
+        const latestAttempt = attempts[0]!;
+        const userAnswerFromAttempt = parseAttemptUserAnswer(latestAttempt);
+        questionContext = {
+          questionId: questionIdForExplain,
+          title: question.title,
+          prompt: question.prompt,
+          questionType: question.type,
+          userAnswerJson: JSON.stringify(userAnswerFromAttempt ?? null),
+          correctAnswerJson: JSON.stringify(question.correctAnswer ?? null),
+          baseExplanation: question.explanation?.short,
+          mistakeType: latestAttempt.mistake_type ?? undefined,
+        };
+      }
+
+      const result = await generateCodeExplain(
+        db,
+        env,
+        {
+          userId,
+          stage,
+          lessonTitle: lesson.title,
+          lessonFocus: lesson.learningGoal ?? lesson.description ?? "",
+          abilityTags: lesson.lessonMeta?.abilityTags ?? [],
+          filePath: sourceFile.path,
+          fileCode: sourceFile.code,
+          fileLineCount:
+            sourceFile.lineCount ?? sourceFile.code.split(/\r?\n/).length,
+          questionContext,
+        },
+        ctx,
+      );
+
+      // 写入 KV: 存 parsed 的 JSON 字符串, 读回时 JSON.parse 即可, 不必每次重跑 schema。
+      if (cache) {
+        await cache
+          .put(cacheKey, JSON.stringify(result.parsed), {
+            expirationTtl: AI_TEACHING_TTL_SECONDS,
+          })
+          .catch((err) =>
+            console.warn("[ai_code_explain] cache put failed", err),
+          );
+      }
+
+      return data(
+        {
+          ok: true as const,
+          feature: "code_explain" as const,
+          stage,
+          filePath: sourceFile.path,
+          language: sourceFile.language ?? null,
+          code: sourceFile.code,
+          summary: result.parsed.summary,
+          annotations: result.parsed.annotations,
           fromCache: false,
         },
         responseHeadersEarly,

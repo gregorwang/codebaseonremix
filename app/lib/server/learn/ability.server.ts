@@ -13,6 +13,11 @@ import {
 import { mapAbilityScoreRow } from "./mappers.server";
 import { getAllLessonProgressForUser } from "./progress-write.server";
 import type { AbilityScore, AbilityScoreRow } from "~/lib/learn/types";
+import {
+  REMIX_MODULE_TREE,
+  isRemixModuleId,
+  type RemixModuleId,
+} from "~/lib/learn/remixModules";
 
 export { calculateAbilityScore, updateAbilityFromAttempt };
 
@@ -180,7 +185,7 @@ export async function getPublishedCurriculumAbilityTags(
 }
 
 export type RemixModuleProgress = {
-  moduleId: import("~/lib/learn/remixModules").RemixModuleId;
+  moduleId: RemixModuleId;
   label: string;
   description: string;
   paths: string[];
@@ -195,12 +200,8 @@ export async function getRemixModuleProgress(
   userId: string,
   cache?: KVNamespace,
 ): Promise<RemixModuleProgress[]> {
-  const { REMIX_MODULE_TREE, isRemixModuleId } = await import(
-    "~/lib/learn/remixModules"
-  );
-
   const tallies = new Map<
-    import("~/lib/learn/remixModules").RemixModuleId,
+    RemixModuleId,
     { total: number; completed: number }
   >();
 
