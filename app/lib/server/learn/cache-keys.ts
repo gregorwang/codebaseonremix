@@ -34,22 +34,21 @@ export const LEARN_CACHE_KEYS = {
   aiExplanation: (questionId: string, answerHash: string) =>
     learnCacheKey("question", questionId, "ai-explanation", answerHash),
   /**
-   * 新版「源码精读讲义」缓存 (v5, InlineCodeExplainView 用)。
+   * 新版「源码精读讲义」缓存 (v6, InlineCodeExplainView 用)。
    * - orientation: 与 questionId 无关, 按文件路径全局共享。
    * - explanation: 按 (questionId, answerHash) 缓存, 不写入用户身份。
-   * 与 codeOrientation / aiExplanation 是两条独立链路, 互不污染缓存。
    *
    * key path 历史:
-   *   - code-explain        v4 卡片版 (已废弃)
-   *   - code-explain-v5     v5a 单栏版 (prompt 未喂行号, AI 行号普遍飘 ±10 行, 弃用)
-   *   - code-explain-v5b    v5b 单栏版 (prompt 给源码加 `N | ` 行号前缀 + 锚定铁律, 当前)
-   * 命名空间隔离让上一轮飘掉的脏 KV 自然淘汰, 不污染新讲义。
+   *   - code-explain        v4 卡片版 (废弃)
+   *   - code-explain-v5     v5a 行号易飘 (废弃)
+   *   - code-explain-v5b    v5b 行号前缀 prompt, 仍依赖 AI 自己锚行 (废弃)
+   *   - code-explain-v6     v6 AI 在 lines 数组里同步输出代码 + 注释, 行号天然一致 (当前)
    */
   codeExplainOrientation: (filePath: string) =>
-    learnCacheKey("code-explain-v5b", "orientation", filePath),
+    learnCacheKey("code-explain-v6", "orientation", filePath),
   codeExplainAfterAnswer: (questionId: string, answerHash: string) =>
     learnCacheKey(
-      "code-explain-v5b",
+      "code-explain-v6",
       "after-answer",
       questionId,
       answerHash,

@@ -18,7 +18,20 @@ export type CodeAnnotationLevel =
   | "risk"
   | "suggestion";
 
-/** v5: 一行代码下的简短旁批。AI 同一行只允许一条。 */
+/** v6: AI 一次性输出的"代码行 + 可选旁批"组合。
+ *  每行带 line / code / note?, 行号、代码内容、旁批全部由 AI 在同一次输出里同步生成,
+ *  从根上避免"AI 数行飘 / 行号锚错位"的问题 — 因为 AI 自己输出代码自己锚行号, 内部一致。 */
+export type CodeExplainedLine = {
+  /** 1-based 行号, AI 输出时与 code 同步生成。 */
+  line: number;
+  /** 这一行的源码原文 (AI 从输入里原样 echo, 不做加工)。 */
+  code: string;
+  /** 可选行内旁批 (≤ 30 字, // 风格小注释), 没有就不出现这字段。 */
+  note?: string;
+};
+
+/** v5: 一行代码下的简短旁批。AI 同一行只允许一条。
+ *  @deprecated v6 起把 line+code+note 合并进 CodeExplainedLine, 这个类型不再用。 */
 export type CodeLineNote = {
   /** 1-based 行号。 */
   line: number;

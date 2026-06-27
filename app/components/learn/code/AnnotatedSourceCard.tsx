@@ -3,25 +3,18 @@ import { useFetcher } from "react-router";
 import type { QuestionType } from "~/lib/learn/types";
 import type {
   CodeBlockNote,
-  CodeLineNote,
+  CodeExplainedLine,
 } from "~/lib/learn/codeExplainTypes";
 import { InlineCodeExplainView } from "~/components/learn/code/InlineCodeExplainView";
 
 /**
- * 「代码 + AI 讲解」卡片 (v5 单栏精读讲义版)。
+ * 「代码 + AI 讲解」卡片 (v6: AI 一次性输出源码 + 注释)。
  *
- * v3: AI 直接返一整段 markdown 成品, 前端用 AiMarkdown 整块渲染 —— 像聊天记录,
- *     行号与代码段关联全丢。
- * v4: AI 返结构化批注 JSON, 前端「左源码 + 右卡片栏」绝对定位对齐 ——
- *     右侧空白带 + 双向滚动看起来像 IDE 审稿, 不像讲义。
- * v5 (当前): AI 返 {lineNotes, blockNotes}, 前端 InlineCodeExplainView 把行注释
- *     塞到代码行下面, 把段讲解块插到 endLine 后, 全部在同一个垂直流里。
- *
- * 两个 stage:
- *  - "orientation" (未提交本题): 中性导读, 不剧透答案。
- *  - "explanation" (已提交本题): 结合作答, 给针对性批注。
- *
- * 缓存逻辑保留: 切回某文件不重拉; 用户点「重新生成」走 force=1 跳过 KV。
+ * v3: AI 直接返一整段 markdown 成品 (聊天记录形态)
+ * v4: AI 返结构化批注 JSON, 前端左源码 + 右卡片栏 (右侧大量空白)
+ * v5a/b: AI 返 lineNotes/blockNotes, 前端把 D1 源码与 AI 注释拼装 (AI 数行号易飘)
+ * v6 (当前): AI 在同一次输出里同步返 lines: [{line, code, note?}] + blockNotes,
+ *           源码和行号天然一致, 无锚错位可能。
  */
 type CodeExplainData =
   | {
@@ -30,9 +23,8 @@ type CodeExplainData =
       stage: "orientation" | "explanation";
       filePath: string;
       language: string | null;
-      code: string;
       summary: string;
-      lineNotes: CodeLineNote[];
+      lines: CodeExplainedLine[];
       blockNotes: CodeBlockNote[];
       fromCache?: boolean;
     }
@@ -42,7 +34,7 @@ type AnnotatedSourceCardProps = {
   /** 本题相关的源码文件(相对 remix 路径), 第一个为默认激活。空数组表示无源码。 */
   files: string[];
   questionId: string;
-  /** 仅做日志/未来扩展, v5 不再依赖 questionType。 */
+  /** 仅做日志/未来扩展, v6 不再依赖 questionType。 */
   questionType: QuestionType;
   /** 是否已提交本题(决定 orientation vs explanation)。 */
   answered: boolean;
@@ -73,11 +65,10 @@ function isDirectoryPath(path: string): boolean {
 }
 
 type CachedPayload = {
-  code: string;
   language: string | null;
   filePath: string;
   summary: string;
-  lineNotes: CodeLineNote[];
+  lines: CodeExplainedLine[];
   blockNotes: CodeBlockNote[];
 };
 
@@ -145,11 +136,10 @@ export function AnnotatedSourceCard({
       setCache((prev) => ({
         ...prev,
         [key]: {
-          code: d.code,
           language: d.language,
           filePath: d.filePath,
           summary: d.summary,
-          lineNotes: d.lineNotes,
+          lines: d.lines,
           blockNotes: d.blockNotes,
         },
       }));
@@ -204,7 +194,7 @@ export function AnnotatedSourceCard({
               {answered ? "结合你的答案" : "读前导读"}
               {loading && " · 生成中…"}
               {payload &&
-                ` · ${payload.lineNotes.length} 行旁批 · ${payload.blockNotes.length} 段讲解`}
+                ` · ${payload.lines.filter((l) => l.note?.trim()).length} 行旁批 · ${payload.blockNotes.length} 段讲解`}
             </span>
           </h3>
         </div>
@@ -280,8 +270,7 @@ export function AnnotatedSourceCard({
           <InlineCodeExplainView
             filePath={payload.filePath}
             language={payload.language ?? undefined}
-            code={payload.code}
-            lineNotes={payload.lineNotes}
+            lines={payload.lines}
             blockNotes={payload.blockNotes}
           />
         ) : (

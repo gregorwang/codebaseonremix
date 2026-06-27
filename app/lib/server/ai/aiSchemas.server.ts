@@ -196,27 +196,34 @@ export function parseAnnotatedExplanation(
 }
 
 /* ----------------------------------------------------------------
- * 新版「源码精读讲义」解析 (v5)
+ * 新版「源码精读讲义」解析 (v6)
  *
  * 给 InlineCodeExplainView 用。AI 输出 JSON:
  *   {
  *     summary: "一句话总览",
- *     lineNotes: [{ line, text }, ...],
+ *     lines: [
+ *       { line: 1, code: "import ...", note?: "可选旁批" },
+ *       ...
+ *     ],
  *     blockNotes: [
  *       { id, startLine, endLine, title, level, summary, why?, risk?, suggestion? },
  *       ...
  *     ]
  *   }
  *
- * 与 parseAnnotatedExplanation (note/placement, v3) 是两套独立 schema, 互不污染。
- * v4 的 annotations 卡片化结构已弃用 (CodeExplainView 进入冷藏)。
+ * 关键差异 (vs v5b): AI 把代码和注释**在同一次输出里同步生成**, 行号和代码内容
+ * 由 AI 自己同步发出, 内部一致, 不再依赖外部"先取源码 + 再让 AI 锚行号"的拼装。
+ * 这从架构上消除了 v5a / v5b 都解不完的"AI 数行飘"问题。
+ *
+ * 与 parseAnnotatedExplanation (v3 note/placement) 是独立 schema, 互不污染。
  * ---------------------------------------------------------------- */
 
 const CODE_EXPLAIN_LEVELS = new Set(["basic", "important", "risk", "suggestion"]);
 
-export type StructuredLineNote = {
+export type StructuredExplainedLine = {
   line: number;
-  text: string;
+  code: string;
+  note?: string;
 };
 
 export type StructuredBlockNote = {
@@ -233,7 +240,7 @@ export type StructuredBlockNote = {
 
 export type StructuredCodeExplain = {
   summary: string;
-  lineNotes: StructuredLineNote[];
+  lines: StructuredExplainedLine[];
   blockNotes: StructuredBlockNote[];
 };
 
@@ -249,13 +256,14 @@ function cleanText(v: unknown, maxLen = 800): string | "" {
 /**
  * 解析 AI 返回的「源码精读讲义」JSON。容错重点:
  *  - 剥掉 ```json ... ``` 围栏;
- *  - 行号夹紧到 [1, fileLineCount], endLine >= startLine, 非法整条丢弃;
- *  - level 不在白名单时强制改为 "basic";
- *  - 任何字段含硬凭证特征(sk-..., api_key=... 等)的整条丢弃;
- *  - lineNotes 同行去重 (保留首条);
- *  - blockNote id 缺失 / 重复时, 用 b${index} 兜底;
+ *  - lines 数组每条要有 line:number + code:string (code 可空字符串, 用于空行);
+ *  - lines 数量必须接近 fileLineCount (容差 ±5 行) — 太短/太长说明 AI 偷工或塞了别的东西;
+ *  - 行号必须落在 [1, fileLineCount];
+ *  - 任何字段含硬凭证特征(sk-..., api_key=... 等)的整条 line / blockNote 丢弃;
+ *  - blockNote startLine/endLine 必须落在 lines 实际出现的行号范围内;
+ *  - level 不在白名单时强制 "basic"; id 缺失/重复用 b${index} 兜底;
  *  - blockNote 必须有非空 title + summary, 否则丢弃。
- * 两个列表都为空时抛错, 让上层走失败标记。允许只有 lineNotes 或只有 blockNotes。
+ * lines 为空时抛错。允许 blockNotes 为空 (有些课只需要行注释)。
  */
 export function parseStructuredCodeExplain(
   rawText: string,
@@ -286,24 +294,47 @@ export function parseStructuredCodeExplain(
 
   const overallSummary = cleanText(data.summary, 200);
 
-  /* ---- lineNotes ---- */
-  const rawLineNotes = Array.isArray(data.lineNotes) ? data.lineNotes : [];
-  const seenLines = new Set<number>();
-  const lineNotes: StructuredLineNote[] = [];
-  for (const item of rawLineNotes) {
+  /* ---- lines: AI echo 的源码 + 可选 note ---- */
+  const rawLines = Array.isArray(data.lines) ? data.lines : [];
+  if (rawLines.length === 0) {
+    throw new Error("AI 未输出 lines 数组");
+  }
+  // 防 AI 偷工: lines 数量必须接近文件实际行数 (±5 行容差)。
+  // 容差给 5 是因为 trailing newline / BOM / shiki 解析有时会偏移一两行。
+  const lineCountDelta = Math.abs(rawLines.length - lineCap);
+  if (lineCountDelta > Math.max(5, Math.ceil(lineCap * 0.1))) {
+    throw new Error(
+      `AI 输出 lines 行数 ${rawLines.length} 与文件总行数 ${lineCap} 差异过大 (delta=${lineCountDelta})`,
+    );
+  }
+
+  const lines: StructuredExplainedLine[] = [];
+  const seenLine = new Set<number>();
+  for (const item of rawLines) {
     if (!isRecord(item)) continue;
     const lineRaw = Number(item.line);
     if (!Number.isFinite(lineRaw)) continue;
     const line = Math.max(1, Math.min(Math.floor(lineRaw), lineCap));
-    if (seenLines.has(line)) continue; // 同一行多条只取首条
-    const text = cleanText(item.text, 60); // 行旁批严格短: 60 字内 (prompt 写 30, 给一点缓冲)
-    if (!text) continue;
-    seenLines.add(line);
-    lineNotes.push({ line, text });
+    if (seenLine.has(line)) continue; // 同一行号被 AI 重复输出, 留首条
+    seenLine.add(line);
+
+    const code = typeof item.code === "string" ? item.code : "";
+    // code 字段不过滤 hard secret — 这是源码原文, 该有什么有什么 (scanner 阶段已过)。
+    // 真要防止 AI 改坏源码, 是另一层的事情。
+
+    const note = cleanText(item.note, 60); // 旁批严格短
+    const entry: StructuredExplainedLine = { line, code };
+    if (note) entry.note = note;
+    lines.push(entry);
   }
-  lineNotes.sort((a, b) => a.line - b.line);
+  lines.sort((a, b) => a.line - b.line);
+
+  if (lines.length === 0) {
+    throw new Error("AI 输出的 lines 全部无效");
+  }
 
   /* ---- blockNotes ---- */
+  const validLineNumbers = new Set(lines.map((l) => l.line));
   const rawBlockNotes = Array.isArray(data.blockNotes) ? data.blockNotes : [];
   const usedIds = new Set<string>();
   const blockNotes: StructuredBlockNote[] = [];
@@ -317,6 +348,14 @@ export function parseStructuredCodeExplain(
     const startRaw = Number(item.startLine);
     if (!Number.isFinite(startRaw)) return;
     const start = Math.max(1, Math.min(Math.floor(startRaw), lineCap));
+    // startLine 必须是 lines 数组里真实出现过的行号 (允许偏移 1 行)
+    if (
+      !validLineNumbers.has(start) &&
+      !validLineNumbers.has(start - 1) &&
+      !validLineNumbers.has(start + 1)
+    ) {
+      return;
+    }
 
     const endRaw = Number(item.endLine ?? item.startLine);
     let end = Number.isFinite(endRaw)
@@ -329,7 +368,6 @@ export function parseStructuredCodeExplain(
       CODE_EXPLAIN_LEVELS.has(lvlRaw) ? lvlRaw : "basic"
     ) as StructuredBlockNote["level"];
 
-    // id 兜底: AI 给的 id 若空 / 重复 / 不是字符串, 都用 b${idx}。
     let id = typeof item.id === "string" ? item.id.trim() : "";
     if (!id || usedIds.has(id)) id = `b${idx}`;
     usedIds.add(id);
@@ -356,11 +394,7 @@ export function parseStructuredCodeExplain(
     return a.endLine - b.endLine;
   });
 
-  if (lineNotes.length === 0 && blockNotes.length === 0) {
-    throw new Error("AI 未产出有效讲义");
-  }
-
-  return { summary: overallSummary, lineNotes, blockNotes };
+  return { summary: overallSummary, lines, blockNotes };
 }
 
 

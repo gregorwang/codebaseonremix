@@ -466,12 +466,12 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         try {
           const parsed = JSON.parse(cached) as {
             summary: string;
-            lineNotes: unknown[];
+            lines: unknown[];
             blockNotes: unknown[];
           };
-          // v5 shape 校验: 必须同时有 lineNotes / blockNotes 字段, 否则视为脏数据。
+          // v6 shape 校验: 必须有 lines 字段 (源码 + 注释一体), 否则视为脏数据。
           if (
-            Array.isArray(parsed.lineNotes) &&
+            Array.isArray(parsed.lines) &&
             Array.isArray(parsed.blockNotes)
           ) {
             return data(
@@ -481,9 +481,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
                 stage,
                 filePath: sourceFile.path,
                 language: sourceFile.language ?? null,
-                code: sourceFile.code,
                 summary: parsed.summary ?? "",
-                lineNotes: parsed.lineNotes,
+                lines: parsed.lines,
                 blockNotes: parsed.blockNotes,
                 fromCache: true,
               },
@@ -555,9 +554,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           stage,
           filePath: sourceFile.path,
           language: sourceFile.language ?? null,
-          code: sourceFile.code,
           summary: result.parsed.summary,
-          lineNotes: result.parsed.lineNotes,
+          lines: result.parsed.lines,
           blockNotes: result.parsed.blockNotes,
           fromCache: false,
         },

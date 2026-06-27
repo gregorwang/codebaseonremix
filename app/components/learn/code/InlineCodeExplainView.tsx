@@ -4,33 +4,34 @@ import { getLearnTheme, subscribeLearnTheme } from "~/lib/learn/theme.client";
 import type {
   CodeAnnotationLevel,
   CodeBlockNote,
-  CodeLineNote,
+  CodeExplainedLine,
 } from "~/lib/learn/codeExplainTypes";
 
 /**
- * 单栏「源码精读讲义」视图。
+ * 单栏「源码精读讲义」视图 (v6)。
  *
- * 设计目标 (相对 v4 右栏卡片版的反思):
- *  - v4 右栏卡片 + 行号绝对定位本质上是个翻译版的 figma, 看起来像审稿 IDE 不像讲义,
- *    碰到一行只有 1 条批注 + 中间大片空白时, 右栏会出现大片空白带, 反而割裂阅读。
- *  - 这一版回归"老师在源码上加批注"的物理隐喻: 代码、行注释、段讲解全在同一个垂直流里,
- *    页面整体滚动, 不再有独立的二级滚动条, 也不再用绝对定位玩对齐。
+ * 数据流变更 (v5 → v6):
+ *   v5: 前端拿 D1 的源码字符串 + AI 的 lineNotes/blockNotes, 在前端拼装。
+ *       问题: AI 数行号容易飘, 即便加了行号前缀 prompt, 仍然依赖 AI 自己数。
+ *   v6: AI 同步输出 lines 数组 [{line, code, note?}] + blockNotes 数组。
+ *       关键: 由 AI 同一次输出里既给代码又给行号, 内部一致, 不存在锚错位的可能。
+ *       前端**完全按 AI 给的 lines 渲染**, 不再依赖外部源码 (源码作为 prompt 输入,
+ *       但不再作为渲染输入)。
  *
- * 渲染顺序 (按行号 1..N 顺序遍历):
+ * 渲染顺序 (按 AI 给的 lines 顺序遍历):
  *   1. 这一行代码 (行号 + shiki 高亮 + 落入 blockNote 范围时的浅色背景)
- *   2. 这一行的 lineNote (若有, 渲染为 // 风格的浅色小注释)
- *   3. 凡 endLine === 当前行的 blockNote, 全部依次插入到代码流
+ *   2. 这一行的 note (若有, 渲染为 // 风格的浅色小注释)
+ *   3. 凡 endLine === 当前 line 的 blockNote, 全部依次插入到代码流
  *
- * level 配色与 v4 共享同一组 CSS 变量, 保持视觉语言统一。
+ * level 配色与 v5 一致, 保持视觉语言统一。
  */
 
 export type InlineCodeExplainViewProps = {
   filePath: string;
   /** 不传则按 filePath + 代码内容自动推断。 */
   language?: string;
-  code: string;
-  /** 一行一条短注释 (≤ 30 字), 同一行多条时取首条。 */
-  lineNotes: CodeLineNote[];
+  /** AI 同步输出的"代码行 + 可选旁批"列表, 已按 line 升序。 */
+  lines: CodeExplainedLine[];
   /** 多层级讲解块, 插入到 endLine 后。 */
   blockNotes: CodeBlockNote[];
 };
@@ -40,18 +41,14 @@ const LINE_HEIGHT = 24;
 /** 行号列宽度。 */
 const GUTTER_WIDTH = 56;
 
-/** 4 个 level 的视觉配置, 跟 v4 CodeExplainView 共用同一组颜色变量。 */
+/** 4 个 level 的视觉配置 (与 v5 共用同一组颜色变量)。 */
 const LEVEL_STYLES: Record<
   CodeAnnotationLevel,
   {
     label: string;
-    /** 讲解块整体外观 (左 accent + 浅底)。 */
     blockClass: string;
-    /** "重点解释 / 风险提示" 标题字色。 */
     headingClass: string;
-    /** 代码行落入这个 level 区间时的软高亮底色。 */
     rangeSoft: string;
-    /** 小标签 (顶部 badge) 配色。 */
     badgeClass: string;
   }
 > = {
@@ -101,7 +98,6 @@ const LEVEL_PRIORITY: Record<CodeAnnotationLevel, number> = {
   basic: 0,
 };
 
-/** L13-L23 / L13 这种行号区间显示。 */
 function rangeLabel(b: { startLine: number; endLine: number }): string {
   if (b.startLine === b.endLine) return `L${b.startLine}`;
   return `L${b.startLine}-L${b.endLine}`;
@@ -110,34 +106,28 @@ function rangeLabel(b: { startLine: number; endLine: number }): string {
 export function InlineCodeExplainView({
   filePath,
   language,
-  code,
-  lineNotes,
+  lines,
   blockNotes,
 }: InlineCodeExplainViewProps) {
+  // 把 AI 给的 lines 数组拼成完整源码, 用来传给 shiki 一次性高亮 (保留跨行模板字符串等上下文)。
+  const fullCode = useMemo(() => lines.map((l) => l.code).join("\n"), [lines]);
   const lang = useMemo(
-    () => language ?? inferCodeLanguage(filePath, code),
-    [language, filePath, code],
+    () => language ?? inferCodeLanguage(filePath, fullCode),
+    [language, filePath, fullCode],
   );
-  const lines = useMemo(() => code.split("\n"), [code]);
-  const totalLines = lines.length;
 
-  // line -> 这一行的注释 (同一行多条时取首条, AI prompt 也只允许一条)。
-  const lineToNote = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const n of lineNotes) {
-      if (!n.text?.trim()) continue;
-      if (map.has(n.line)) continue;
-      map.set(n.line, n.text.trim());
-    }
-    return map;
-  }, [lineNotes]);
+  // 计数: 有 note 的行数 + blockNote 个数。
+  const noteCount = useMemo(
+    () => lines.filter((l) => l.note && l.note.trim()).length,
+    [lines],
+  );
 
   // line -> 这一行所在 blockNote 的最高 level (用于软高亮代码行背景)。
   const lineToLevel = useMemo(() => {
     const map = new Map<number, CodeAnnotationLevel>();
     for (const b of blockNotes) {
       const start = Math.max(1, b.startLine);
-      const end = Math.min(totalLines, Math.max(b.startLine, b.endLine));
+      const end = Math.max(b.startLine, b.endLine);
       for (let n = start; n <= end; n++) {
         const prev = map.get(n);
         if (!prev || LEVEL_PRIORITY[b.level] > LEVEL_PRIORITY[prev]) {
@@ -146,7 +136,7 @@ export function InlineCodeExplainView({
       }
     }
     return map;
-  }, [blockNotes, totalLines]);
+  }, [blockNotes]);
 
   // line -> 在这一行后展示的 blockNote 列表 (按 startLine 升序, 再按 id 稳定排序)。
   const endLineToBlocks = useMemo(() => {
@@ -156,15 +146,15 @@ export function InlineCodeExplainView({
       return a.id.localeCompare(b.id);
     });
     for (const b of sorted) {
-      const at = Math.min(totalLines, Math.max(b.startLine, b.endLine));
+      const at = Math.max(b.startLine, b.endLine);
       const arr = map.get(at) ?? [];
       arr.push(b);
       map.set(at, arr);
     }
     return map;
-  }, [blockNotes, totalLines]);
+  }, [blockNotes]);
 
-  // shiki 行级 HTML; 首次拉 shiki 前先 fallback 到纯文本, 不阻塞首屏布局。
+  // shiki 一次性高亮 fullCode → 拆成每行 HTML; 首次拉 shiki 前先 fallback 到纯文本。
   const isDark = useSyncExternalStore(
     subscribeLearnTheme,
     getLearnTheme,
@@ -174,7 +164,7 @@ export function InlineCodeExplainView({
   useEffect(() => {
     let cancelled = false;
     import("./shikiHighlight.client")
-      .then((mod) => mod.highlightToLines(code, lang, isDark))
+      .then((mod) => mod.highlightToLines(fullCode, lang, isDark))
       .then((arr) => {
         if (!cancelled) setLineHtml(arr);
       })
@@ -184,12 +174,12 @@ export function InlineCodeExplainView({
     return () => {
       cancelled = true;
     };
-  }, [code, lang, isDark]);
+  }, [fullCode, lang, isDark]);
 
   const [copied, setCopied] = useState(false);
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(fullCode);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -212,7 +202,7 @@ export function InlineCodeExplainView({
             {lang}
           </span>
           <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-raised)] px-2 py-0.5 font-mono text-[10px] text-[var(--fg-soft)]">
-            {lineNotes.length} 行旁批 · {blockNotes.length} 段讲解
+            {noteCount} 行旁批 · {blockNotes.length} 段讲解
           </span>
           <button
             type="button"
@@ -227,16 +217,16 @@ export function InlineCodeExplainView({
 
       {/* 主体: 单栏垂直流, 不再有独立纵向滚动条, 页面整体滚动即可。 */}
       <div className="overflow-x-auto bg-[var(--code-bg)] py-2 font-mono text-sm text-[var(--code-fg)]">
-        {lines.map((raw, idx) => {
-          const lineNumber = idx + 1;
+        {lines.map((entry, idx) => {
+          const lineNumber = entry.line;
           const level = lineToLevel.get(lineNumber);
           const bgClass = level ? LEVEL_STYLES[level].rangeSoft : "";
           const html = lineHtml?.[idx];
-          const note = lineToNote.get(lineNumber);
+          const note = entry.note?.trim();
           const blocks = endLineToBlocks.get(lineNumber);
 
           return (
-            <div key={lineNumber}>
+            <div key={`${lineNumber}-${idx}`}>
               {/* 代码行 */}
               <div
                 className={`flex ${bgClass}`}
@@ -264,13 +254,12 @@ export function InlineCodeExplainView({
                       dangerouslySetInnerHTML={{ __html: html }}
                     />
                   ) : (
-                    <span>{raw || " "}</span>
+                    <span>{entry.code || " "}</span>
                   )}
                 </div>
               </div>
 
-              {/* 行内旁批 (// 风格, 浅色, 小字号)
-                  视觉绑定: 行号列显示 └─ 连接符, 浅色背景跟纯代码区分开, 让用户一眼看出
+              {/* 行内旁批: 行号列显示 └─ 连接符, 浅色背景跟纯代码区分开, 一眼看出
                   "这条是上一行代码的旁批", 不会跟代码本身混淆。`//` 前缀**不加** select-none
                   以便复制粘贴时能带走它。长 note 自动 wrap, 不再 truncate。 */}
               {note && (
@@ -319,9 +308,7 @@ function BlockNoteCard({ note }: { note: CodeBlockNote }) {
     >
       {/* 标题行: badge + 行号区间 + 加粗标题, 用底部细线跟下方正文分开,
           让用户一眼区分"这是一段讲解块"而不是"飘进代码流里的几个 <p>" */}
-      <div
-        className="flex flex-wrap items-center gap-2 border-b border-current/15 pb-1.5"
-      >
+      <div className="flex flex-wrap items-center gap-2 border-b border-current/15 pb-1.5">
         <span
           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none ${styles.badgeClass}`}
         >

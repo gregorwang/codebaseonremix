@@ -251,7 +251,12 @@ async function runAiFeature(
               ? 4096
               : params.feature === "code_orientation"
                 ? 4096
-                : params.feature === "lesson_diagram"
+                : params.feature === "code_explain"
+                  ? // v6: AI 要 echo 完整源码 + 多层级讲解, 一份 200 行的文件
+                    // 估算 8-12k 输出 tokens (源码 + JSON 转义 + 中文讲解), 给到 16384
+                    // 才能稳住不被 max_tokens 截断成残缺 JSON。
+                    16384
+                  : params.feature === "lesson_diagram"
                   ? 1500
                   : params.feature === "question_diagram"
                     ? 1500
