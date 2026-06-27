@@ -34,16 +34,19 @@ export const LEARN_CACHE_KEYS = {
   aiExplanation: (questionId: string, answerHash: string) =>
     learnCacheKey("question", questionId, "ai-explanation", answerHash),
   /**
-   * 新版「结构化代码批注」缓存 (CodeExplainView 用)。
+   * 新版「源码精读讲义」缓存 (v5, InlineCodeExplainView 用)。
    * - orientation: 与 questionId 无关, 按文件路径全局共享。
    * - explanation: 按 (questionId, answerHash) 缓存, 不写入用户身份。
    * 与 codeOrientation / aiExplanation 是两条独立链路, 互不污染缓存。
+   *
+   * key path 用 "code-explain-v5" — 与 v4 的 "code-explain" 分开命名空间,
+   * 让 v4 旧 KV 自然过期 (annotations 形状的旧缓存不会被 v5 parser 解析)。
    */
   codeExplainOrientation: (filePath: string) =>
-    learnCacheKey("code-explain", "orientation", filePath),
+    learnCacheKey("code-explain-v5", "orientation", filePath),
   codeExplainAfterAnswer: (questionId: string, answerHash: string) =>
     learnCacheKey(
-      "code-explain",
+      "code-explain-v5",
       "after-answer",
       questionId,
       answerHash,

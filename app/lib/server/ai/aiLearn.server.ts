@@ -746,11 +746,12 @@ export async function generateCodeOrientation(
 }
 
 /* ----------------------------------------------------------------
- * generateCodeExplain — 新版「老师旁批注」结构化讲解。
+ * generateCodeExplain — v5 「源码精读讲义」结构化讲解。
  *
  * 与 generateCodeOrientation / generateExplanation 平行: 同样的源码 + 关卡上下文
- * (explanation stage 还会带上题目 + 用户作答), 但要求 AI 输出严格 JSON 结构,
- * 解析后给 CodeExplainView 渲染成卡片化批注, 不走 markdown。
+ * (explanation stage 还会带上题目 + 用户作答), 但要求 AI 输出严格 JSON 结构
+ * { summary, lineNotes, blockNotes }, 解析后给 InlineCodeExplainView 渲染成
+ * 单栏「源码精读讲义」(行旁批 + 段讲解), 不走 markdown, 也不走 v4 右侧卡片。
  *
  * 两个 stage:
  *  - orientation: 答题前导读, 中性不剧透。无 attempt 强制。
@@ -758,7 +759,7 @@ export async function generateCodeOrientation(
  *
  * 返回:
  *   - AiLearnResult: 原始 JSON 字符串 (供 KV 缓存 + 日志)
- *   - parsed: 解析后的结构化批注 (供路由直接 spread 到响应)
+ *   - parsed: 解析后的结构化讲义 (供路由直接 spread 到响应)
  * ---------------------------------------------------------------- */
 
 export type GenerateCodeExplainInput = {

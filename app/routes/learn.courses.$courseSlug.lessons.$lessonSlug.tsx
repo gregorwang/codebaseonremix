@@ -373,7 +373,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     }
   }
 
-  /* ---------- 新版「结构化代码批注」(CodeExplainView 用, 两个 stage) ---------- */
+  /* ---------- v5 「源码精读讲义」(InlineCodeExplainView 用, 两个 stage) ---------- */
   if (intent === "ai_code_explain") {
     const stageRaw = String(formData.get("stage") ?? "");
     const stage: "orientation" | "explanation" =
@@ -466,22 +466,30 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         try {
           const parsed = JSON.parse(cached) as {
             summary: string;
-            annotations: unknown[];
+            lineNotes: unknown[];
+            blockNotes: unknown[];
           };
-          return data(
-            {
-              ok: true as const,
-              feature: "code_explain" as const,
-              stage,
-              filePath: sourceFile.path,
-              language: sourceFile.language ?? null,
-              code: sourceFile.code,
-              summary: parsed.summary ?? "",
-              annotations: parsed.annotations ?? [],
-              fromCache: true,
-            },
-            responseHeadersEarly,
-          );
+          // v5 shape 校验: 必须同时有 lineNotes / blockNotes 字段, 否则视为脏数据。
+          if (
+            Array.isArray(parsed.lineNotes) &&
+            Array.isArray(parsed.blockNotes)
+          ) {
+            return data(
+              {
+                ok: true as const,
+                feature: "code_explain" as const,
+                stage,
+                filePath: sourceFile.path,
+                language: sourceFile.language ?? null,
+                code: sourceFile.code,
+                summary: parsed.summary ?? "",
+                lineNotes: parsed.lineNotes,
+                blockNotes: parsed.blockNotes,
+                fromCache: true,
+              },
+              responseHeadersEarly,
+            );
+          }
         } catch {
           // 缓存被脏数据污染, 落入重新生成流程。
         }
@@ -549,7 +557,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           language: sourceFile.language ?? null,
           code: sourceFile.code,
           summary: result.parsed.summary,
-          annotations: result.parsed.annotations,
+          lineNotes: result.parsed.lineNotes,
+          blockNotes: result.parsed.blockNotes,
           fromCache: false,
         },
         responseHeadersEarly,

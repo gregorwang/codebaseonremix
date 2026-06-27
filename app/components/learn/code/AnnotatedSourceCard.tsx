@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import type { QuestionType } from "~/lib/learn/types";
-import type { CodeAnnotation } from "~/lib/learn/codeExplainTypes";
-import { CodeExplainView } from "~/components/learn/code/CodeExplainView";
+import type {
+  CodeBlockNote,
+  CodeLineNote,
+} from "~/lib/learn/codeExplainTypes";
+import { InlineCodeExplainView } from "~/components/learn/code/InlineCodeExplainView";
 
 /**
- * 「代码 + AI 讲解」卡片 (v4 结构化批注版)。
+ * 「代码 + AI 讲解」卡片 (v5 单栏精读讲义版)。
  *
- * v3 是 AI 直接返一整段 markdown 成品, 前端用 AiMarkdown 整块渲染 ——
- * 看起来像聊天记录, 行号信息和代码段的关联都丢了。
- *
- * v4 改成: AI 返结构化批注 JSON, 路由层把源码全文也一起塞回来,
- * 前端用 CodeExplainView 渲染成「左源码 + 右批注卡片」的老师旁批形态。
+ * v3: AI 直接返一整段 markdown 成品, 前端用 AiMarkdown 整块渲染 —— 像聊天记录,
+ *     行号与代码段关联全丢。
+ * v4: AI 返结构化批注 JSON, 前端「左源码 + 右卡片栏」绝对定位对齐 ——
+ *     右侧空白带 + 双向滚动看起来像 IDE 审稿, 不像讲义。
+ * v5 (当前): AI 返 {lineNotes, blockNotes}, 前端 InlineCodeExplainView 把行注释
+ *     塞到代码行下面, 把段讲解块插到 endLine 后, 全部在同一个垂直流里。
  *
  * 两个 stage:
  *  - "orientation" (未提交本题): 中性导读, 不剧透答案。
@@ -28,7 +32,8 @@ type CodeExplainData =
       language: string | null;
       code: string;
       summary: string;
-      annotations: CodeAnnotation[];
+      lineNotes: CodeLineNote[];
+      blockNotes: CodeBlockNote[];
       fromCache?: boolean;
     }
   | { ok: false; error: string; code?: string };
@@ -37,7 +42,7 @@ type AnnotatedSourceCardProps = {
   /** 本题相关的源码文件(相对 remix 路径), 第一个为默认激活。空数组表示无源码。 */
   files: string[];
   questionId: string;
-  /** 仅做日志/未来扩展, v4 不再依赖 questionType (上一版传给 markdown 渲染时用过)。 */
+  /** 仅做日志/未来扩展, v5 不再依赖 questionType。 */
   questionType: QuestionType;
   /** 是否已提交本题(决定 orientation vs explanation)。 */
   answered: boolean;
@@ -72,7 +77,8 @@ type CachedPayload = {
   language: string | null;
   filePath: string;
   summary: string;
-  annotations: CodeAnnotation[];
+  lineNotes: CodeLineNote[];
+  blockNotes: CodeBlockNote[];
 };
 
 export function AnnotatedSourceCard({
@@ -143,7 +149,8 @@ export function AnnotatedSourceCard({
           language: d.language,
           filePath: d.filePath,
           summary: d.summary,
-          annotations: d.annotations,
+          lineNotes: d.lineNotes,
+          blockNotes: d.blockNotes,
         },
       }));
       pendingKeyRef.current = null;
@@ -196,7 +203,8 @@ export function AnnotatedSourceCard({
             <span className="ml-2 text-xs font-normal text-[var(--fg-soft)]">
               {answered ? "结合你的答案" : "读前导读"}
               {loading && " · 生成中…"}
-              {payload && ` · ${payload.annotations.length} 条批注`}
+              {payload &&
+                ` · ${payload.lineNotes.length} 行旁批 · ${payload.blockNotes.length} 段讲解`}
             </span>
           </h3>
         </div>
@@ -269,11 +277,12 @@ export function AnnotatedSourceCard({
         ) : !payload && loading ? (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">AI 生成中…</p>
         ) : payload ? (
-          <CodeExplainView
+          <InlineCodeExplainView
             filePath={payload.filePath}
             language={payload.language ?? undefined}
             code={payload.code}
-            annotations={payload.annotations}
+            lineNotes={payload.lineNotes}
+            blockNotes={payload.blockNotes}
           />
         ) : (
           <p className="px-1 py-6 text-sm text-[var(--fg-muted)]">

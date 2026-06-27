@@ -196,39 +196,45 @@ export function parseAnnotatedExplanation(
 }
 
 /* ----------------------------------------------------------------
- * 新版「结构化代码批注」解析
+ * 新版「源码精读讲义」解析 (v5)
  *
- * 给 CodeExplainView 用。AI 输出 JSON:
+ * 给 InlineCodeExplainView 用。AI 输出 JSON:
  *   {
  *     summary: "一句话总览",
- *     annotations: [
- *       { id, startLine, endLine, title, level, summary, details, risk?, suggestion? },
+ *     lineNotes: [{ line, text }, ...],
+ *     blockNotes: [
+ *       { id, startLine, endLine, title, level, summary, why?, risk?, suggestion? },
  *       ...
  *     ]
  *   }
  *
- * 与上面 parseAnnotatedExplanation (note/placement) 是两套独立 schema, 互不污染。
- * 旧的给行内/块下/高亮三态注释用; 新的给「老师旁批注」结构化卡片用。
+ * 与 parseAnnotatedExplanation (note/placement, v3) 是两套独立 schema, 互不污染。
+ * v4 的 annotations 卡片化结构已弃用 (CodeExplainView 进入冷藏)。
  * ---------------------------------------------------------------- */
 
 const CODE_EXPLAIN_LEVELS = new Set(["basic", "important", "risk", "suggestion"]);
 
-export type StructuredCodeAnnotation = {
+export type StructuredLineNote = {
+  line: number;
+  text: string;
+};
+
+export type StructuredBlockNote = {
   id: string;
-  filePath: string;
   startLine: number;
   endLine: number;
   title: string;
   level: "basic" | "important" | "risk" | "suggestion";
   summary: string;
-  details: string;
+  why?: string;
   risk?: string;
   suggestion?: string;
 };
 
 export type StructuredCodeExplain = {
   summary: string;
-  annotations: StructuredCodeAnnotation[];
+  lineNotes: StructuredLineNote[];
+  blockNotes: StructuredBlockNote[];
 };
 
 /** 把不安全 / 空白 / 太短的字符串裁干净, 提取出真正可展示的内容。 */
@@ -241,19 +247,21 @@ function cleanText(v: unknown, maxLen = 800): string | "" {
 }
 
 /**
- * 解析 AI 返回的结构化代码批注 JSON。容错重点:
+ * 解析 AI 返回的「源码精读讲义」JSON。容错重点:
  *  - 剥掉 ```json ... ``` 围栏;
  *  - 行号夹紧到 [1, fileLineCount], endLine >= startLine, 非法整条丢弃;
  *  - level 不在白名单时强制改为 "basic";
  *  - 任何字段含硬凭证特征(sk-..., api_key=... 等)的整条丢弃;
- *  - id 缺失或重复时, 用 a${index} 兜底;
- *  - title / summary 任一缺失即丢弃(没有标题 + 简介就根本不是一条可展示的批注)。
- * 完全没有有效批注时抛错, 让上层拿到失败标记重试或回退。
+ *  - lineNotes 同行去重 (保留首条);
+ *  - blockNote id 缺失 / 重复时, 用 b${index} 兜底;
+ *  - blockNote 必须有非空 title + summary, 否则丢弃。
+ * 两个列表都为空时抛错, 让上层走失败标记。允许只有 lineNotes 或只有 blockNotes。
  */
 export function parseStructuredCodeExplain(
   rawText: string,
   fileLineCount: number,
-  filePath: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _filePath: string,
 ): StructuredCodeExplain {
   const cleaned = rawText
     .trim()
@@ -277,19 +285,34 @@ export function parseStructuredCodeExplain(
       : 1;
 
   const overallSummary = cleanText(data.summary, 200);
-  const rawAnnotations = Array.isArray(data.annotations) ? data.annotations : [];
 
+  /* ---- lineNotes ---- */
+  const rawLineNotes = Array.isArray(data.lineNotes) ? data.lineNotes : [];
+  const seenLines = new Set<number>();
+  const lineNotes: StructuredLineNote[] = [];
+  for (const item of rawLineNotes) {
+    if (!isRecord(item)) continue;
+    const lineRaw = Number(item.line);
+    if (!Number.isFinite(lineRaw)) continue;
+    const line = Math.max(1, Math.min(Math.floor(lineRaw), lineCap));
+    if (seenLines.has(line)) continue; // 同一行多条只取首条
+    const text = cleanText(item.text, 60); // 行旁批严格短: 60 字内 (prompt 写 30, 给一点缓冲)
+    if (!text) continue;
+    seenLines.add(line);
+    lineNotes.push({ line, text });
+  }
+  lineNotes.sort((a, b) => a.line - b.line);
+
+  /* ---- blockNotes ---- */
+  const rawBlockNotes = Array.isArray(data.blockNotes) ? data.blockNotes : [];
   const usedIds = new Set<string>();
-  const annotations: StructuredCodeAnnotation[] = [];
-
-  rawAnnotations.forEach((item: unknown, idx: number) => {
+  const blockNotes: StructuredBlockNote[] = [];
+  rawBlockNotes.forEach((item: unknown, idx: number) => {
     if (!isRecord(item)) return;
 
     const title = cleanText(item.title, 80);
-    const summary = cleanText(item.summary, 200);
+    const summary = cleanText(item.summary, 240);
     if (!title || !summary) return;
-
-    const details = cleanText(item.details, 800);
 
     const startRaw = Number(item.startLine);
     if (!Number.isFinite(startRaw)) return;
@@ -304,38 +327,40 @@ export function parseStructuredCodeExplain(
     const lvlRaw = typeof item.level === "string" ? item.level.trim() : "";
     const level = (
       CODE_EXPLAIN_LEVELS.has(lvlRaw) ? lvlRaw : "basic"
-    ) as StructuredCodeAnnotation["level"];
+    ) as StructuredBlockNote["level"];
 
-    // id 兜底: AI 给的 id 若空 / 重复 / 不是字符串, 都用 a${idx}。
+    // id 兜底: AI 给的 id 若空 / 重复 / 不是字符串, 都用 b${idx}。
     let id = typeof item.id === "string" ? item.id.trim() : "";
-    if (!id || usedIds.has(id)) id = `a${idx}`;
+    if (!id || usedIds.has(id)) id = `b${idx}`;
     usedIds.add(id);
 
-    const risk = cleanText(item.risk, 400);
-    const suggestion = cleanText(item.suggestion, 400);
+    const why = cleanText(item.why, 320);
+    const risk = cleanText(item.risk, 320);
+    const suggestion = cleanText(item.suggestion, 320);
 
-    const ann: StructuredCodeAnnotation = {
+    const block: StructuredBlockNote = {
       id,
-      filePath,
       startLine: start,
       endLine: end,
       title,
       level,
       summary,
-      details: details || summary, // details 缺失就回填 summary, 不让卡片空一块
     };
-    if (risk) ann.risk = risk;
-    if (suggestion) ann.suggestion = suggestion;
-    annotations.push(ann);
+    if (why) block.why = why;
+    if (risk) block.risk = risk;
+    if (suggestion) block.suggestion = suggestion;
+    blockNotes.push(block);
+  });
+  blockNotes.sort((a, b) => {
+    if (a.startLine !== b.startLine) return a.startLine - b.startLine;
+    return a.endLine - b.endLine;
   });
 
-  annotations.sort((a, b) => a.startLine - b.startLine);
-
-  if (annotations.length === 0) {
-    throw new Error("AI 未产出有效批注");
+  if (lineNotes.length === 0 && blockNotes.length === 0) {
+    throw new Error("AI 未产出有效讲义");
   }
 
-  return { summary: overallSummary, annotations };
+  return { summary: overallSummary, lineNotes, blockNotes };
 }
 
 

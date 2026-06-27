@@ -15,12 +15,16 @@ import type {
 } from "~/lib/learn/codeExplainTypes";
 
 /**
- * 新版「代码 + AI 讲解」视图: 左边带行号 / 语法高亮的源码,
- * 右边一栏卡片化批注, 卡片顶部尽量与 startLine 对齐, 双向联动。
+ * @deprecated v4 「左源码 + 右批注栏」视图。
  *
- * 它不接受 markdown 长文 —— 那是聊天式讲解。这里专门给「老师旁批注」
- * 这种使用形态用, 所以 annotations 是结构化数据 (title/summary/details
- * /risk/suggestion), 渲染粒度由组件控制, 不交给 markdown 渲染器。
+ * 已被 v5 `InlineCodeExplainView` 替换 —— 后者把所有讲解塞进同一个垂直流,
+ * 不再有右侧空白栏 / 二级滚动条 / 绝对定位对齐, 阅读体验更像「源码精读讲义」。
+ * 本文件暂时保留, 仅作为参考实现; AnnotatedSourceCard 已不再 import。
+ *
+ * 旧设计:
+ *   - 左: 带行号 / 语法高亮的源码; 右: 一栏卡片化批注。
+ *   - 卡片用绝对定位试图对齐 startLine, 但行少 + 卡片多时会强行下移, 反而割裂阅读。
+ *   - 双向点击联动 (line ↔ card 滚动)。
  */
 
 export type CodeExplainViewProps = {
